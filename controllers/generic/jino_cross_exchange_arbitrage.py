@@ -27,7 +27,7 @@ class JinoCrossExchangeArbitrageConfig(ArbitrageControllerConfig):
     min_profitability: Decimal = Field(default=Decimal("0.005"), ge=Decimal("0"))
     delay_between_executors: int = Field(default=10, ge=0)
     max_executors_imbalance: int = Field(default=1, ge=1)
-    rate_connector: str = "binance"
+    rate_connector: str = "binance_paper_trade"
     quote_conversion_asset: str = "USDT"
 
     safety_mode: Literal["paper", "live"] = "paper"
@@ -52,12 +52,16 @@ class JinoCrossExchangeArbitrageConfig(ArbitrageControllerConfig):
                 "raise the cap explicitly if you really want a larger trade"
             )
 
-        connectors = [self.exchange_pair_1.connector_name, self.exchange_pair_2.connector_name]
+        connectors = [
+            self.exchange_pair_1.connector_name,
+            self.exchange_pair_2.connector_name,
+            self.rate_connector,
+        ]
         if self.safety_mode == "paper":
             live_connectors = [name for name in connectors if not name.endswith("_paper_trade")]
             if live_connectors:
                 raise ValueError(
-                    "safety_mode=paper only accepts *_paper_trade connectors. "
+                    "safety_mode=paper only accepts *_paper_trade connectors, including rate_connector. "
                     f"Live connector(s) supplied: {', '.join(live_connectors)}"
                 )
         return self
