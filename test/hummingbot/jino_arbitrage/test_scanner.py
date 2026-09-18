@@ -80,3 +80,28 @@ def test_scanner_can_require_rebalance_transferability():
     assert all(item.rebalance_transferable for item in out)
     assert any(item.sell_exchange == "b" for item in out)
     assert all(item.sell_exchange != "c" for item in out)
+
+
+
+def test_scanner_can_require_positive_profit_after_rebalance():
+    buy = q(
+        "a",
+        "BTC-USDT",
+        "100",
+        "99",
+        networks=[NetworkStatus("ERC20", deposit_enabled=True, withdrawal_enabled=False)],
+    )
+    sell_expensive = q(
+        "b",
+        "BTC-USDT",
+        "101",
+        "102",
+        networks=[NetworkStatus("Ethereum", deposit_enabled=False, withdrawal_enabled=True, withdrawal_fee_quote=Decimal("5"))],
+    )
+
+    out = scan_opportunities(
+        [buy, sell_expensive],
+        Decimal("0.1"),
+        ScannerPolicy(require_profit_after_rebalance=True),
+    )
+    assert out == []
