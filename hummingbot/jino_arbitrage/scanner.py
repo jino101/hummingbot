@@ -46,6 +46,7 @@ class ScannerPolicy:
     estimated_slippage_pct: Decimal = Decimal("0")
     require_rebalance_transferable: bool = False
     require_profit_after_rebalance: bool = False
+    max_quote_age_seconds: Optional[float] = None
     allow_pairs: Sequence[str] = ()
     deny_pairs: Sequence[str] = ()
 
@@ -54,6 +55,7 @@ def scan_opportunities(
     quotes: Iterable[VenueQuote],
     requested_amount_base: Decimal,
     policy: ScannerPolicy = ScannerPolicy(),
+    now_timestamp: Optional[float] = None,
 ) -> List[ArbitrageOpportunity]:
     """Rank cross-exchange opportunities under a scanner-only policy.
 
@@ -70,6 +72,16 @@ def scan_opportunities(
         if (not allow or _normalize_pair(quote.trading_pair) in allow)
         and _normalize_pair(quote.trading_pair) not in deny
     ]
+
+    if policy.max_quote_age_seconds is not None:
+        if now_timestamp is None:
+            raise ValueError("now_timestamp is required when max_quote_age_seconds is set")
+        filtered_quotes = [
+            quote
+            for quote in filtered_quotes
+            if quote.observed_at is not None
+            and 0 <= now_timestamp - quote.observed_at <= policy.max_quote_age_seconds
+        ]
 
     opportunities = find_best_opportunities(
         filtered_quotes,
