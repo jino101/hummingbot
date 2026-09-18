@@ -108,3 +108,32 @@ def test_finds_and_sorts_only_profitable_opportunities():
     assert opportunities[0].buy_exchange == "a"
     assert opportunities[0].sell_exchange == "b"
     assert all(item.net_spread_pct >= Decimal("0.005") for item in opportunities)
+
+
+
+def test_rebalance_fee_uses_cheapest_common_enabled_network():
+    buy_venue = quote(
+        "a",
+        "100",
+        "99",
+        "0",
+        networks=[
+            NetworkStatus("ERC20", deposit_enabled=True, withdrawal_enabled=False),
+            NetworkStatus("TRC20", deposit_enabled=True, withdrawal_enabled=False),
+        ],
+    )
+    sell_venue = quote(
+        "b",
+        "102",
+        "103",
+        "0",
+        networks=[
+            NetworkStatus("Ethereum", deposit_enabled=False, withdrawal_enabled=True, withdrawal_fee_quote=Decimal("3")),
+            NetworkStatus("Tron", deposit_enabled=False, withdrawal_enabled=True, withdrawal_fee_quote=Decimal("1")),
+        ],
+    )
+    opportunity = calculate_opportunity(buy_venue, sell_venue, Decimal("0.5"))
+    assert opportunity is not None
+    assert opportunity.common_transfer_networks == ["ETHEREUM", "TRON"]
+    assert opportunity.estimated_rebalance_fee_quote == Decimal("1")
+    assert opportunity.expected_profit_after_rebalance_quote == opportunity.expected_profit_quote - Decimal("1")
