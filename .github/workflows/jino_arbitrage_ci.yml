@@ -1,0 +1,41 @@
+name: Jino Arbitrage CI
+
+on:
+  push:
+    branches: [chatgpt/arbitrage-bot]
+  pull_request:
+    branches: [master]
+    paths:
+      - 'controllers/generic/jino_cross_exchange_arbitrage.py'
+      - 'hummingbot/jino_arbitrage/**'
+      - 'hummingbot/cli/strategy_configs.py'
+      - 'test/controllers/generic/test_jino_cross_exchange_arbitrage.py'
+      - 'test/hummingbot/jino_arbitrage/**'
+      - 'test/hummingbot/cli/test_strategy_configs.py'
+      - '.github/workflows/jino_arbitrage_ci.yml'
+  workflow_dispatch:
+
+jobs:
+  targeted-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: Cache conda dependencies
+        id: conda-dependencies
+        uses: actions/cache@v5
+        with:
+          path: |
+            /home/runner/conda_pkgs_dir/
+            /usr/share/miniconda/envs
+          key: ${{ runner.os }}-jino-conda-${{ hashFiles('setup/environment.yml') }}
+      - name: Install Hummingbot environment
+        uses: ./.github/actions/install_env_and_hb
+        with:
+          program-cache-hit: 'false'
+          dependencies-cache-hit: ${{ steps.conda-dependencies.outputs.cache-hit }}
+      - name: Run Jino arbitrage tests
+        shell: bash
+        run: |
+          source $CONDA/etc/profile.d/conda.sh
+          conda activate hummingbot
+          PYTHONPATH=$GITHUB_WORKSPACE pytest -q             test/controllers/generic/test_jino_cross_exchange_arbitrage.py             test/hummingbot/jino_arbitrage             test/hummingbot/cli/test_strategy_configs.py
