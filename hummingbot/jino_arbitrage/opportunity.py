@@ -21,6 +21,7 @@ class VenueQuote:
     max_buy_base: Decimal
     max_sell_base: Decimal
     networks: Sequence[NetworkStatus] = ()
+    observed_at: Optional[float] = None
 
 
 @dataclass(frozen=True)
