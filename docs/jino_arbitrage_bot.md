@@ -96,3 +96,39 @@ The controller will reject real connector names while `safety_mode=paper`. Befor
 ## Safety note
 
 This project is experimental trading software. A paper result is not evidence of live profitability. Real execution adds latency, partial fills, outages, changing fee tiers, exchange restrictions, and capital risk.
+
+
+## Current implementation status
+
+Completed on this branch:
+
+- Safety-first cross-exchange controller with paper/live separation.
+- Paper defaults for Binance Paper and KuCoin Paper.
+- Per-trade cap, daily realized-loss limit, completed-trade limit, and manual kill switch.
+- Net opportunity calculator with fees, slippage, and depth caps.
+- Transfer-network alias matching and fail-closed deposit/withdraw status semantics.
+- Rebalance transfer-fee estimate and optional post-rebalance profitability filter.
+- Scanner-only common-pair discovery with allow/deny lists.
+- Regression fix so the CLI selects the custom controller config class rather than an imported base class.
+- Targeted unit tests and a dedicated Jino Arbitrage CI workflow.
+- Paper smoke-test helper at `scripts/jino_arbitrage_paper_smoke.sh`.
+
+### One-command paper smoke test
+
+After pulling the branch and activating the Hummingbot conda environment:
+
+```bash
+read -s -p "Hummingbot password: " HBOT_PASSWORD; echo; export HBOT_PASSWORD
+bash scripts/jino_arbitrage_paper_smoke.sh
+```
+
+The helper explicitly forces paper connectors and a 25 USDT test amount, prints status after 20 seconds, and then stops the bot. It does not store or print the password.
+
+### Remaining before live-ready
+
+- Verify the paper smoke test in a real Codespace/runtime.
+- Add exchange-specific live deposit/withdraw/network-status adapters.
+- Add stale-quote / quote-age protection to the live scanner data source.
+- Add tested partial-fill / one-leg recovery policy.
+- Run a meaningful paper soak test before any real exchange keys are connected.
+- Keep withdrawal permission disabled on any future live API keys.
