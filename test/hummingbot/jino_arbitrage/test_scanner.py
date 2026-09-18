@@ -4,7 +4,7 @@ from hummingbot.jino_arbitrage.opportunity import NetworkStatus, VenueQuote
 from hummingbot.jino_arbitrage.scanner import ScannerPolicy, common_trading_pairs, scan_opportunities
 
 
-def q(exchange: str, pair: str, buy: str, sell: str, fee: str = "0", networks=()):
+def q(exchange: str, pair: str, buy: str, sell: str, fee: str = "0", networks=(), observed_at=None):
     return VenueQuote(
         exchange=exchange,
         trading_pair=pair,
@@ -14,6 +14,7 @@ def q(exchange: str, pair: str, buy: str, sell: str, fee: str = "0", networks=()
         max_buy_base=Decimal("1"),
         max_sell_base=Decimal("1"),
         networks=networks,
+        observed_at=observed_at,
     )
 
 
@@ -105,3 +106,22 @@ def test_scanner_can_require_positive_profit_after_rebalance():
         ScannerPolicy(require_profit_after_rebalance=True),
     )
     assert out == []
+
+
+
+def test_scanner_fails_closed_on_stale_or_unknown_quotes():
+    quotes = [
+        q("a", "BTC-USDT", "100", "99", observed_at=995.0),
+        q("b", "BTC-USDT", "102", "103", observed_at=996.0),
+        q("stale", "BTC-USDT", "90", "110", observed_at=900.0),
+        q("unknown", "BTC-USDT", "90", "120", observed_at=None),
+    ]
+    out = scan_opportunities(
+        quotes,
+        Decimal("0.1"),
+        ScannerPolicy(max_quote_age_seconds=10),
+        now_timestamp=1000.0,
+    )
+    assert out
+    assert all(item.buy_exchange not in {"stale", "unknown"} for item in out)
+    assert all(item.sell_exchange not in {"stale", "unknown"} for item in out)
