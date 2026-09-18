@@ -38,6 +38,8 @@ class ArbitrageOpportunity:
     expected_profit_quote: Decimal
     common_transfer_networks: Sequence[str]
     rebalance_transferable: bool
+    estimated_rebalance_fee_quote: Decimal
+    expected_profit_after_rebalance_quote: Decimal
 
 
 def _canonical_network(name: str) -> str:
@@ -90,6 +92,19 @@ def common_transfer_networks(buy_venue: VenueQuote, sell_venue: VenueQuote) -> L
     return sorted(usable)
 
 
+def estimated_rebalance_fee_quote(buy_venue: VenueQuote, sell_venue: VenueQuote) -> Decimal:
+    """Cheapest explicitly usable withdrawal fee for the modeled rebalance direction."""
+    common = set(common_transfer_networks(buy_venue, sell_venue))
+    fees = [
+        network.withdrawal_fee_quote
+        for network in sell_venue.networks
+        if _canonical_network(network.network) in common
+        and network.withdrawal_enabled is True
+        and network.withdrawal_fee_quote >= 0
+    ]
+    return min(fees) if fees else Decimal("0")
+
+
 def calculate_opportunity(
     buy_venue: VenueQuote,
     sell_venue: VenueQuote,
@@ -113,6 +128,8 @@ def calculate_opportunity(
     buy_notional = amount_base * buy_venue.buy_price
     expected_profit_quote = buy_notional * net_spread_pct
     networks = common_transfer_networks(buy_venue, sell_venue)
+    rebalance_fee_quote = estimated_rebalance_fee_quote(buy_venue, sell_venue)
+    expected_after_rebalance = expected_profit_quote - rebalance_fee_quote
 
     return ArbitrageOpportunity(
         trading_pair=buy_venue.trading_pair,
@@ -128,6 +145,8 @@ def calculate_opportunity(
         expected_profit_quote=expected_profit_quote,
         common_transfer_networks=networks,
         rebalance_transferable=len(networks) > 0,
+        estimated_rebalance_fee_quote=rebalance_fee_quote,
+        expected_profit_after_rebalance_quote=expected_after_rebalance,
     )
 
 
