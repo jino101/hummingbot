@@ -169,9 +169,10 @@ def controller_config_class(config_data: dict):
         raise ValueError("controller config is missing controller_type or controller_name")
     module = importlib.import_module(f"{CONTROLLERS_MODULE}.{ctype}.{cname}")
     bases = (ControllerConfigBase, MarketMakingControllerConfigBase, DirectionalTradingControllerConfigBase)
+    module_name = getattr(module, "__name__", None)
     cls = next((m for _, m in inspect.getmembers(module)
                 if inspect.isclass(m)
-                and m.__module__ == module.__name__
+                and m.__module__ == module_name
                 and m not in bases
                 and issubclass(m, ControllerConfigBase)), None)
     if cls is None:
