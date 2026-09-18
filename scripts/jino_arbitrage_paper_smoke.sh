@@ -16,8 +16,10 @@ if ! command -v hbot >/dev/null 2>&1; then
 fi
 
 # Recreate the dedicated smoke-test config every run so stale scaffolds cannot
-# carry old defaults into a new test. This only removes the smoke-test file.
-rm -f "conf/controllers/$CONFIG_NAME"
+# carry old defaults into a new test. Controller starts are wrapped by hbot in
+# a v2-script loader that uses the same filename, so remove BOTH generated
+# config files from previous smoke-test runs before creating a fresh one.
+rm -f "conf/controllers/$CONFIG_NAME" "conf/scripts/$CONFIG_NAME"
 
 hbot create jino_cross_exchange_arbitrage --controller \
   --name "$CONFIG_NAME" \
