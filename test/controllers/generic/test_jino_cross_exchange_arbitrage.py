@@ -52,6 +52,7 @@ def test_defaults_are_paper_only():
     assert config.safety_mode == "paper"
     assert config.exchange_pair_1.connector_name.endswith("_paper_trade")
     assert config.exchange_pair_2.connector_name.endswith("_paper_trade")
+    assert config.rate_connector == "binance_paper_trade"
 
 
 def test_paper_mode_rejects_live_connector():
