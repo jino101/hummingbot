@@ -45,6 +45,7 @@ class ScannerPolicy:
     min_net_spread_pct: Decimal = Decimal("0")
     estimated_slippage_pct: Decimal = Decimal("0")
     require_rebalance_transferable: bool = False
+    require_profit_after_rebalance: bool = False
     allow_pairs: Sequence[str] = ()
     deny_pairs: Sequence[str] = ()
 
@@ -79,5 +80,10 @@ def scan_opportunities(
 
     if policy.require_rebalance_transferable:
         opportunities = [item for item in opportunities if item.rebalance_transferable]
+    if policy.require_profit_after_rebalance:
+        opportunities = [
+            item for item in opportunities
+            if item.rebalance_transferable and item.expected_profit_after_rebalance_quote > 0
+        ]
 
     return opportunities
