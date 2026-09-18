@@ -109,6 +109,7 @@ Completed on this branch:
 - Transfer-network alias matching and fail-closed deposit/withdraw status semantics.
 - Rebalance transfer-fee estimate and optional post-rebalance profitability filter.
 - Scanner-only common-pair discovery with allow/deny lists.
+- Fail-safe one-leg recovery decision helper; exposed/partial fills escalate to manual intervention unless auto-hedge is explicitly enabled by a future integration.
 - Regression fix so the CLI selects the custom controller config class rather than an imported base class.
 - Targeted unit tests and a dedicated Jino Arbitrage CI workflow.
 - Paper smoke-test helper at `scripts/jino_arbitrage_paper_smoke.sh`.
@@ -129,6 +130,6 @@ The helper explicitly forces paper connectors and a 25 USDT test amount, prints 
 - Verify the paper smoke test in a real Codespace/runtime.
 - Add exchange-specific live deposit/withdraw/network-status adapters.
 - Add stale-quote / quote-age protection to the live scanner data source.
-- Add tested partial-fill / one-leg recovery policy.
+- Integrate the tested one-leg recovery decision policy into live executor event handling; automatic hedging remains disabled by default.
 - Run a meaningful paper soak test before any real exchange keys are connected.
 - Keep withdrawal permission disabled on any future live API keys.
