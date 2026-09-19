@@ -131,3 +131,35 @@ def test_custom_info_exposes_safety_state():
     assert info["safety_mode"] == "paper"
     assert info["risk_gate"] == "clear"
     assert info["completed_trades_today"] == 0
+
+
+def test_clear_risk_gate_proposes_both_arbitrage_directions():
+    config = JinoCrossExchangeArbitrageConfig(
+        id="test",
+        total_amount_quote=Decimal("25"),
+        max_trade_amount_quote=Decimal("25"),
+    )
+    controller = make_controller(config)
+    controller.market_data_provider.quantize_order_amount.return_value = Decimal("0.001")
+    actions = controller.determine_executor_actions()
+    assert len(actions) == 2
+    directions = {
+        (
+            action.executor_config.buying_market.connector_name,
+            action.executor_config.selling_market.connector_name,
+        )
+        for action in actions
+    }
+    assert directions == {
+        ("binance_paper_trade", "kucoin_paper_trade"),
+        ("kucoin_paper_trade", "binance_paper_trade"),
+    }
+    assert all(action.executor_config.order_amount == Decimal("0.001") for action in actions)
+
+
+def test_completed_trade_limit_blocks_new_actions():
+    config = JinoCrossExchangeArbitrageConfig(id="test", max_completed_trades_per_day=1)
+    controller = make_controller(config)
+    now = controller.market_data_provider.time()
+    controller.executors_info = [make_executor_info(Decimal("1"), now - 60)]
+    assert controller.determine_executor_actions() == []
