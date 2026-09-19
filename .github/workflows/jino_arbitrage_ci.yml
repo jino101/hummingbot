@@ -12,6 +12,9 @@ on:
       - 'test/controllers/generic/test_jino_cross_exchange_arbitrage.py'
       - 'test/hummingbot/jino_arbitrage/**'
       - 'test/hummingbot/cli/test_strategy_configs.py'
+      - 'test/hummingbot/strategy/test_jino_strategy_v2_loader.py'
+      - 'scripts/jino_arbitrage_paper_smoke.sh'
+      - 'scripts/jino_arbitrage_paper_soak.sh'
       - '.github/workflows/jino_arbitrage_ci.yml'
   workflow_dispatch:
 
@@ -38,4 +41,4 @@ jobs:
         run: |
           source $CONDA/etc/profile.d/conda.sh
           conda activate hummingbot
-          PYTHONPATH=$GITHUB_WORKSPACE pytest -q             test/controllers/generic/test_jino_cross_exchange_arbitrage.py             test/hummingbot/jino_arbitrage             test/hummingbot/cli/test_strategy_configs.py
+          PYTHONPATH=$GITHUB_WORKSPACE pytest -q             test/controllers/generic/test_jino_cross_exchange_arbitrage.py             test/hummingbot/jino_arbitrage             test/hummingbot/cli/test_strategy_configs.py             test/hummingbot/strategy/test_jino_strategy_v2_loader.py
