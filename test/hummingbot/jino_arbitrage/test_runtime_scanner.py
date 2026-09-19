@@ -2,7 +2,7 @@ from decimal import Decimal
 from unittest.mock import MagicMock
 
 from hummingbot.core.data_type.common import PriceType
-from hummingbot.jino_arbitrage.runtime_scanner import build_provider_quotes, scan_provider_pair
+from hummingbot.jino_arbitrage.runtime_scanner import build_provider_quotes, scan_provider_pair, scan_provider_pairs
 from hummingbot.jino_arbitrage.scanner import ScannerPolicy
 
 
@@ -73,3 +73,33 @@ def test_runtime_scanner_skips_unavailable_connector():
     )
     assert len(quotes) == 1
     assert quotes[0].exchange == "binance_paper_trade"
+
+
+
+def test_runtime_scanner_can_rank_multiple_pairs():
+    provider = provider_with_prices()
+
+    original = provider.get_price_by_type.side_effect
+    def price(connector, pair, price_type):
+        if pair == "ETH-USDT":
+            data = {
+                ("binance_paper_trade", PriceType.BestAsk): Decimal("50"),
+                ("binance_paper_trade", PriceType.BestBid): Decimal("49.9"),
+                ("kucoin_paper_trade", PriceType.BestAsk): Decimal("50.2"),
+                ("kucoin_paper_trade", PriceType.BestBid): Decimal("50.3"),
+            }
+            return data[(connector, price_type)]
+        return original(connector, pair, price_type)
+
+    provider.get_price_by_type.side_effect = price
+
+    opportunities = scan_provider_pairs(
+        provider,
+        ["binance_paper_trade", "kucoin_paper_trade"],
+        ["BTC-USDT", "ETH-USDT"],
+        Decimal("0.1"),
+        ScannerPolicy(min_net_spread_pct=Decimal("0.001")),
+    )
+    assert opportunities
+    assert {item.trading_pair for item in opportunities} == {"BTC-USDT", "ETH-USDT"}
+    assert opportunities[0].net_spread_pct >= opportunities[-1].net_spread_pct
