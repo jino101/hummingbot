@@ -92,3 +92,42 @@ def test_old_loss_does_not_count_toward_current_day():
     now = controller.market_data_provider.time()
     controller.executors_info = [make_executor_info(Decimal("-30"), now - 90000)]
     assert controller._daily_realized_pnl_quote() == Decimal("0")
+
+
+def test_live_mode_rejects_paper_connectors():
+    with pytest.raises(ValueError):
+        JinoCrossExchangeArbitrageConfig(
+            id="test",
+            safety_mode="live",
+            exchange_pair_1=ConnectorPair(connector_name="binance_paper_trade", trading_pair="BTC-USDT"),
+            exchange_pair_2=ConnectorPair(connector_name="kucoin", trading_pair="BTC-USDT"),
+            rate_connector="kucoin",
+        )
+
+
+def test_rejects_same_exchange_on_both_legs():
+    with pytest.raises(ValueError):
+        JinoCrossExchangeArbitrageConfig(
+            id="test",
+            exchange_pair_1=ConnectorPair(connector_name="binance_paper_trade", trading_pair="BTC-USDT"),
+            exchange_pair_2=ConnectorPair(connector_name="binance_paper_trade", trading_pair="BTC-USDT"),
+        )
+
+
+def test_rejects_mismatched_base_assets():
+    with pytest.raises(ValueError):
+        JinoCrossExchangeArbitrageConfig(
+            id="test",
+            exchange_pair_1=ConnectorPair(connector_name="binance_paper_trade", trading_pair="BTC-USDT"),
+            exchange_pair_2=ConnectorPair(connector_name="kucoin_paper_trade", trading_pair="ETH-USDT"),
+        )
+
+
+def test_custom_info_exposes_safety_state():
+    config = JinoCrossExchangeArbitrageConfig(id="test")
+    controller = make_controller(config)
+    info = controller.get_custom_info()
+    assert info["strategy"] == "jino_cross_exchange_arbitrage"
+    assert info["safety_mode"] == "paper"
+    assert info["risk_gate"] == "clear"
+    assert info["completed_trades_today"] == 0
