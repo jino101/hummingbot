@@ -163,3 +163,9 @@ def test_completed_trade_limit_blocks_new_actions():
     now = controller.market_data_provider.time()
     controller.executors_info = [make_executor_info(Decimal("1"), now - 60)]
     assert controller.determine_executor_actions() == []
+
+
+def test_config_resolves_jino_controller_class_not_imported_parent():
+    config = JinoCrossExchangeArbitrageConfig(id="test")
+    controller_class = config.get_controller_class()
+    assert controller_class is JinoCrossExchangeArbitrageController
