@@ -57,12 +57,28 @@ class JinoCrossExchangeArbitrageConfig(ArbitrageControllerConfig):
             self.exchange_pair_2.connector_name,
             self.rate_connector,
         ]
+
+        if self.exchange_pair_1.connector_name == self.exchange_pair_2.connector_name:
+            raise ValueError("cross-exchange arbitrage requires two different exchange connectors")
+
+        base_1 = self.exchange_pair_1.trading_pair.split("-")[0]
+        base_2 = self.exchange_pair_2.trading_pair.split("-")[0]
+        if base_1 != base_2:
+            raise ValueError("both exchange pairs must share the same base asset")
+
         if self.safety_mode == "paper":
             live_connectors = [name for name in connectors if not name.endswith("_paper_trade")]
             if live_connectors:
                 raise ValueError(
                     "safety_mode=paper only accepts *_paper_trade connectors, including rate_connector. "
                     f"Live connector(s) supplied: {', '.join(live_connectors)}"
+                )
+        else:
+            paper_connectors = [name for name in connectors if name.endswith("_paper_trade")]
+            if paper_connectors:
+                raise ValueError(
+                    "safety_mode=live cannot use *_paper_trade connectors. "
+                    f"Paper connector(s) supplied: {', '.join(paper_connectors)}"
                 )
         return self
 
@@ -119,15 +135,34 @@ class JinoCrossExchangeArbitrageController(ArbitrageController):
             return []
         return super().determine_executor_actions()
 
+    def get_custom_info(self) -> dict:
+        completed_today = self._completed_executors_today()
+        return {
+            "strategy": "jino_cross_exchange_arbitrage",
+            "safety_mode": self.config.safety_mode,
+            "exchange_1": self.config.exchange_pair_1.connector_name,
+            "exchange_2": self.config.exchange_pair_2.connector_name,
+            "trading_pair_1": self.config.exchange_pair_1.trading_pair,
+            "trading_pair_2": self.config.exchange_pair_2.trading_pair,
+            "min_profitability": str(self.config.min_profitability),
+            "trade_cap_quote": str(self.config.max_trade_amount_quote),
+            "daily_loss_cap_quote": str(self.config.max_daily_loss_quote),
+            "completed_trades_today": len(completed_today),
+            "completed_trade_limit": self.config.max_completed_trades_per_day,
+            "daily_realized_pnl_quote": str(self._daily_realized_pnl_quote()),
+            "risk_gate": self._risk_gate_reason() or "clear",
+        }
+
     def to_format_status(self) -> List[str]:
         parent_lines = super().to_format_status()
         lines = list(parent_lines) if parent_lines else []
-        reason = self._risk_gate_reason() or "clear"
+        info = self.get_custom_info()
         lines.append(
             "Jino safety: "
-            f"mode={self.config.safety_mode} | "
-            f"trade_cap={self.config.max_trade_amount_quote} {self.config.quote_conversion_asset} | "
-            f"daily_pnl={self._daily_realized_pnl_quote()} {self.config.quote_conversion_asset} | "
-            f"gate={reason}"
+            f"mode={info['safety_mode']} | "
+            f"trade_cap={info['trade_cap_quote']} {self.config.quote_conversion_asset} | "
+            f"daily_pnl={info['daily_realized_pnl_quote']} {self.config.quote_conversion_asset} | "
+            f"completed={info['completed_trades_today']}/{info['completed_trade_limit']} | "
+            f"gate={info['risk_gate']}"
         )
         return lines
