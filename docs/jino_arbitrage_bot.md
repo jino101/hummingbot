@@ -127,9 +127,50 @@ The helper explicitly forces paper connectors and a 25 USDT test amount, prints 
 
 ### Remaining before live-ready
 
-- Verify the paper smoke test in a real Codespace/runtime.
+- Paper smoke test verified in Codespaces: controller starts, appears in status, and stops cleanly.
 - Add exchange-specific live deposit/withdraw/network-status adapters.
 - Add stale-quote / quote-age protection to the live scanner data source.
 - Integrate the tested one-leg recovery decision policy into live executor event handling; automatic hedging remains disabled by default.
 - Run a meaningful paper soak test before any real exchange keys are connected.
 - Keep withdrawal permission disabled on any future live API keys.
+
+
+### Longer paper soak test
+
+A longer paper validation helper is available at `scripts/jino_arbitrage_paper_soak.sh`.
+
+By default it runs for 5 minutes, prints periodic status, scans the recent structured log for
+ERROR/CRITICAL entries, and stops the bot through a shell trap even if the script is interrupted.
+
+```bash
+read -s -p "Hummingbot password: " HBOT_PASSWORD; echo; export HBOT_PASSWORD
+JINO_SOAK_SECONDS=300 JINO_SOAK_STATUS_INTERVAL=30 \
+  bash scripts/jino_arbitrage_paper_soak.sh
+```
+
+This is still a paper-only stability test. Passing it does not prove profitable execution.
+
+### Current milestone
+
+Completed and verified:
+- targeted test suite previously reached 81 passing tests in Codespaces
+- runtime controller-loader regression test passed
+- short Binance Paper / KuCoin Paper smoke test starts and stops cleanly
+- controller safety gates and paper/live separation are implemented
+- pure scanner math covers fees, slippage, stale quotes, liquidity caps, and rebalance fee estimates
+
+Implemented on GitHub and awaiting the next Codespaces pull/test:
+- stricter live-mode validation
+- same-exchange and mismatched-base rejection
+- structured safety status for a future dashboard
+- executor-proposal and daily trade-limit regression tests
+- controller-class resolution hardening
+- longer paper soak helper
+- expanded CI target list
+
+Next runtime milestone:
+1. Pull the latest branch.
+2. Run the expanded targeted tests.
+3. Run the longer paper soak.
+4. Confirm both paper connectors stay healthy and no ERROR/CRITICAL log entries appear.
+5. Observe at least one full paper arbitrage execution path before any live-key work.
