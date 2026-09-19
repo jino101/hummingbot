@@ -90,3 +90,30 @@ def scan_provider_pair(
         policy=policy,
         now_timestamp=now,
     )
+
+
+
+def scan_provider_pairs(
+    market_data_provider,
+    connector_names: Iterable[str],
+    trading_pairs: Iterable[str],
+    requested_amount_base: Decimal,
+    policy: ScannerPolicy,
+    taker_fees_pct: Optional[Dict[str, Decimal]] = None,
+    networks: Optional[Dict[str, List[NetworkStatus]]] = None,
+):
+    """Scan multiple pairs and return one globally ranked opportunity list."""
+    opportunities = []
+    for trading_pair in trading_pairs:
+        opportunities.extend(
+            scan_provider_pair(
+                market_data_provider=market_data_provider,
+                connector_names=connector_names,
+                trading_pair=trading_pair,
+                requested_amount_base=requested_amount_base,
+                policy=policy,
+                taker_fees_pct=taker_fees_pct,
+                networks=networks,
+            )
+        )
+    return sorted(opportunities, key=lambda item: item.net_spread_pct, reverse=True)
