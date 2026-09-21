@@ -37,7 +37,14 @@ cleanup() {
 }
 trap cleanup EXIT INT TERM
 
-rm -f "conf/controllers/$CONFIG_NAME" "conf/scripts/$CONFIG_NAME"
+SOAK_NAME="${CONFIG_NAME%.yml}"
+
+# This helper deliberately reuses one dedicated bot name. Hummingbot appends to
+# logs/logs_<name>.log across runs, so stale ERROR lines from an older failed
+# attempt would otherwise make a healthy soak test look broken.
+rm -f "conf/controllers/$CONFIG_NAME" \
+      "conf/scripts/$CONFIG_NAME" \
+      "logs/logs_${SOAK_NAME}.log"
 
 hbot create jino_cross_exchange_arbitrage --controller \
   --name "$CONFIG_NAME" \
@@ -73,12 +80,12 @@ done
 echo "---- final status ----"
 hbot status
 
-echo "---- recent log errors ----"
-errors="$(hbot logs -n 600 | grep -E ' - (ERROR|CRITICAL) - ' || true)"
+echo "---- current-run log errors ----"
+errors="$(hbot logs -n 2000 | grep -E ' - (ERROR|CRITICAL) - ' || true)"
 if [[ -n "$errors" ]]; then
-  echo "$errors"
-  echo "Jino paper soak test detected runtime errors." >&2
+  printf '%s\n' "$errors"
+  echo "Jino paper soak test detected ERROR/CRITICAL entries from THIS run." >&2
   exit 2
 fi
 
-echo "Jino paper soak test completed without ERROR/CRITICAL log entries."
+echo "Jino paper soak test completed without ERROR/CRITICAL log entries from this run."
