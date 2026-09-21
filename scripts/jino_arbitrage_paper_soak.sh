@@ -8,8 +8,9 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT_DIR"
 
 if [[ -z "${HBOT_PASSWORD:-}" ]]; then
-  echo "HBOT_PASSWORD is not set. Export the local Hummingbot keystore password first." >&2
-  exit 4
+  read -r -s -p "Hummingbot password: " HBOT_PASSWORD
+  echo
+  export HBOT_PASSWORD
 fi
 
 if ! command -v hbot >/dev/null 2>&1; then
