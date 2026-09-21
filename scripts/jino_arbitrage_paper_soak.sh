@@ -7,6 +7,17 @@ STATUS_INTERVAL="${JINO_SOAK_STATUS_INTERVAL:-30}"
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT_DIR"
 
+# Make the helper self-contained: if it is launched outside the hummingbot
+# conda environment, re-run it there with live stdin/stdout so the password
+# prompt remains interactive on Codespaces/mobile terminals.
+if [[ "${CONDA_DEFAULT_ENV:-}" != "hummingbot" ]]; then
+  if ! command -v conda >/dev/null 2>&1; then
+    echo "conda is not available; activate the hummingbot environment first." >&2
+    exit 1
+  fi
+  exec conda run --no-capture-output -n hummingbot bash "$0" "$@"
+fi
+
 if [[ -z "${HBOT_PASSWORD:-}" ]]; then
   read -r -s -p "Hummingbot password: " HBOT_PASSWORD
   echo
