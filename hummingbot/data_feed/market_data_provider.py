@@ -298,23 +298,35 @@ class MarketDataProvider:
         This is the factory method used by the LazyDict cache.
         Note: The connector is NOT started automatically. Call _ensure_non_trading_connector_started()
         to start it with at least one trading pair.
+
+        Paper-trade connectors mirror a real exchange's public order book, but the
+        PaperTradeExchange itself does not implement the private REST helper used by
+        the rate-oracle updater (_get_last_traded_price). For rate collection,
+        resolve *_paper_trade to its real/public connector. This never enables live
+        trading: the returned connector is created with trading_required=False and
+        public-data credentials only.
+
         :param connector_name: str
         :return: ConnectorBase
         """
-        conn_setting = self.conn_settings.get(connector_name)
+        source_connector_name = (
+            connector_name.removesuffix("_paper_trade")
+            if connector_name.endswith("_paper_trade")
+            else connector_name
+        )
+        conn_setting = self.conn_settings.get(source_connector_name)
         if conn_setting is None:
-            self.logger().error(f"Connector {connector_name} not found")
-            raise ValueError(f"Connector {connector_name} not found")
+            self.logger().error(f"Connector {source_connector_name} not found")
+            raise ValueError(f"Connector {source_connector_name} not found")
 
         init_params = conn_setting.conn_init_parameters(
             trading_pairs=[],
             trading_required=False,
-            api_keys=self.get_connector_config_map(connector_name),
+            api_keys=self.get_connector_config_map(source_connector_name),
         )
-        connector_class = get_connector_class(connector_name)
+        connector_class = get_connector_class(source_connector_name)
         connector = connector_class(**init_params)
         return connector
-
     async def _ensure_non_trading_connector_started(
         self, connector: ConnectorBase, connector_name: str, trading_pair: str
     ) -> bool:
