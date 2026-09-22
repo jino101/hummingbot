@@ -174,3 +174,29 @@ Next runtime milestone:
 3. Run the longer paper soak.
 4. Confirm both paper connectors stay healthy and no ERROR/CRITICAL log entries appear.
 5. Observe at least one full paper arbitrage execution path before any live-key work.
+
+
+### Verified paper milestones (Codespaces)
+
+As of 2026-09-22, the following runtime milestones have been observed successfully in Codespaces:
+
+- Five-minute Binance Paper / KuCoin Paper soak completed with no ERROR/CRITICAL entries from that run.
+- Deterministic paper execution-path test reached order creation, fill/completion handling, clean shutdown, and reported a completed paper trade.
+- Dedicated Jino CI and repository CI were green on the branch after the paper-order tracking fixes.
+
+A single helper now runs the full paper validation sequence:
+
+```bash
+bash scripts/jino_arbitrage_paper_validate.sh
+```
+
+This runs the targeted regression suite, the soak test, and the deterministic paper execution-path test. Passing it is a software-validation milestone only; it does not establish live profitability or exchange-transfer availability.
+
+### Next milestone
+
+Before any live-key test, finish and validate:
+
+1. exchange-specific deposit/withdraw/network-status adapters with fail-closed behavior on unknown or stale status;
+2. one-leg/partial-fill recovery integration, with automatic hedging disabled by default;
+3. a small live-readiness gate that refuses live mode unless those checks are available and healthy;
+4. only then, an explicitly opted-in tiny live test with withdrawal permissions disabled.
