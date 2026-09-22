@@ -13,9 +13,12 @@ on:
       - 'test/hummingbot/jino_arbitrage/**'
       - 'test/hummingbot/data_feed/test_market_data_provider.py'
       - 'test/hummingbot/cli/test_strategy_configs.py'
-      - 'test/hummingbot/strategy/test_jino_strategy_v2_loader.py'
+      - 'test/hummingbot/strategy/test_jino_strategy_v2_loader.py             test/hummingbot/strategy_v2/executors/arbitrage_executor/test_arbitrage_executor.py'
+      - 'test/hummingbot/strategy_v2/executors/arbitrage_executor/test_arbitrage_executor.py'
       - 'scripts/jino_arbitrage_paper_smoke.sh'
       - 'scripts/jino_arbitrage_paper_soak.sh'
+      - 'scripts/jino_arbitrage_paper_execution.sh'
+      - 'scripts/jino_arbitrage_paper_validate.sh'
       - '.github/workflows/jino_arbitrage_ci.yml'
   workflow_dispatch:
 
@@ -37,6 +40,13 @@ jobs:
         with:
           program-cache-hit: 'false'
           dependencies-cache-hit: ${{ steps.conda-dependencies.outputs.cache-hit }}
+      - name: Check Jino shell helpers
+        shell: bash
+        run: |
+          bash -n scripts/jino_arbitrage_paper_smoke.sh
+          bash -n scripts/jino_arbitrage_paper_soak.sh
+          bash -n scripts/jino_arbitrage_paper_execution.sh
+          bash -n scripts/jino_arbitrage_paper_validate.sh
       - name: Run Jino arbitrage tests
         shell: bash
         run: |
