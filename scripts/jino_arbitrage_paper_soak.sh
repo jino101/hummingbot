@@ -62,7 +62,24 @@ hbot create jino_cross_exchange_arbitrage --controller \
   --set min_profitability=0.005
 
 echo "Starting Jino paper soak test for ${DURATION_SECONDS}s..."
-hbot start "$CONFIG_NAME" --controller
+
+start_output=""
+if start_output="$(hbot start "$CONFIG_NAME" --controller 2>&1)"; then
+  printf '%s\n' "$start_output"
+else
+  start_rc=$?
+  printf '%s\n' "$start_output" >&2
+  if [[ "$start_output" == *"invalid password"* && -t 0 ]]; then
+    echo "The cached Hummingbot password is invalid. Please enter the real local keystore password." >&2
+    unset HBOT_PASSWORD CONFIG_PASSWORD
+    read -r -s -p "Hummingbot password (retry): " HBOT_PASSWORD
+    echo
+    export HBOT_PASSWORD
+    hbot start "$CONFIG_NAME" --controller
+  else
+    exit "$start_rc"
+  fi
+fi
 
 start_ts="$(date +%s)"
 while true; do
