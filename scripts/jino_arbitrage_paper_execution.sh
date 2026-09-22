@@ -25,7 +25,24 @@ rm -f "conf/controllers/$CONFIG_NAME" "conf/scripts/$CONFIG_NAME" "logs/logs_${C
 hbot create jino_cross_exchange_arbitrage --controller   --name "$CONFIG_NAME"   --set exchange_pair_1.connector_name=binance_paper_trade   --set exchange_pair_1.trading_pair=BTC-USDT   --set exchange_pair_2.connector_name=kucoin_paper_trade   --set exchange_pair_2.trading_pair=BTC-USDT   --set rate_connector=binance_paper_trade   --set quote_conversion_asset=USDT   --set safety_mode=paper   --set total_amount_quote="$TEST_QUOTE_AMOUNT"   --set max_trade_amount_quote="$TEST_QUOTE_AMOUNT"   --set max_daily_loss_quote="$TEST_QUOTE_AMOUNT"   --set max_completed_trades_per_day=1   --set min_profitability=0.005   --set paper_test_force_execution=true
 
 echo "Starting deterministic paper execution-path test with ${TEST_QUOTE_AMOUNT} USDT paper notional..."
-hbot start "$CONFIG_NAME" --controller
+
+start_output=""
+if start_output="$(hbot start "$CONFIG_NAME" --controller 2>&1)"; then
+  printf '%s\n' "$start_output"
+else
+  start_rc=$?
+  printf '%s\n' "$start_output" >&2
+  if [[ "$start_output" == *"invalid password"* && -t 0 ]]; then
+    echo "The cached Hummingbot password is invalid. Please enter the real local keystore password." >&2
+    unset HBOT_PASSWORD CONFIG_PASSWORD
+    read -r -s -p "Hummingbot password (retry): " HBOT_PASSWORD
+    echo
+    export HBOT_PASSWORD
+    hbot start "$CONFIG_NAME" --controller
+  else
+    exit "$start_rc"
+  fi
+fi
 
 success=0
 for _ in $(seq 1 24); do
