@@ -34,6 +34,7 @@ class JinoCrossExchangeArbitrageConfig(ArbitrageControllerConfig):
     max_trade_amount_quote: Decimal = Field(default=Decimal("100"), gt=Decimal("0"))
     max_daily_loss_quote: Decimal = Field(default=Decimal("25"), ge=Decimal("0"))
     max_completed_trades_per_day: int = Field(default=100, ge=1)
+    paper_test_force_execution: bool = False
 
     @field_validator("exchange_pair_1", "exchange_pair_2")
     @classmethod
@@ -74,6 +75,8 @@ class JinoCrossExchangeArbitrageConfig(ArbitrageControllerConfig):
                     f"Live connector(s) supplied: {', '.join(live_connectors)}"
                 )
         else:
+            if self.paper_test_force_execution:
+                raise ValueError("paper_test_force_execution is only allowed in safety_mode=paper")
             paper_connectors = [name for name in connectors if name.endswith("_paper_trade")]
             if paper_connectors:
                 raise ValueError(
@@ -133,7 +136,23 @@ class JinoCrossExchangeArbitrageController(ArbitrageController):
         if reason:
             self.logger().warning(f"Jino arbitrage safety gate: {reason}. No new executor will be created.")
             return []
-        return super().determine_executor_actions()
+
+        actions = super().determine_executor_actions()
+        if self.config.paper_test_force_execution and actions:
+            # Deterministic execution-path validation only: create one direction, once.
+            # The dedicated paper test sets max_completed_trades_per_day=1 so the risk
+            # gate blocks any further executor after this one completes.
+            return actions[:1]
+        return actions
+
+    def create_arbitrage_executor_action(self, buying_exchange_pair, selling_exchange_pair):
+        action = super().create_arbitrage_executor_action(buying_exchange_pair, selling_exchange_pair)
+        if action is not None and self.config.paper_test_force_execution:
+            # A deliberately negative threshold guarantees the paper executor reaches
+            # the order-placement path once valid quotes/fees are available. This is
+            # never accepted in live safety mode.
+            action.executor_config.min_profitability = Decimal("-1")
+        return action
 
     def get_custom_info(self) -> dict:
         completed_today = self._completed_executors_today()
@@ -151,6 +170,7 @@ class JinoCrossExchangeArbitrageController(ArbitrageController):
             "completed_trade_limit": self.config.max_completed_trades_per_day,
             "daily_realized_pnl_quote": str(self._daily_realized_pnl_quote()),
             "risk_gate": self._risk_gate_reason() or "clear",
+            "paper_test_force_execution": self.config.paper_test_force_execution,
         }
 
     def to_format_status(self) -> List[str]:
