@@ -169,3 +169,34 @@ def test_config_resolves_jino_controller_class_not_imported_parent():
     config = JinoCrossExchangeArbitrageConfig(id="test")
     controller_class = config.get_controller_class()
     assert controller_class is JinoCrossExchangeArbitrageController
+
+
+def test_force_execution_is_rejected_in_live_mode():
+    with pytest.raises(ValueError):
+        JinoCrossExchangeArbitrageConfig(
+            id="test",
+            safety_mode="live",
+            exchange_pair_1=ConnectorPair(connector_name="binance", trading_pair="BTC-USDT"),
+            exchange_pair_2=ConnectorPair(connector_name="kucoin", trading_pair="BTC-USDT"),
+            rate_connector="binance",
+            paper_test_force_execution=True,
+        )
+
+
+def test_force_execution_creates_single_paper_executor_with_test_threshold():
+    config = JinoCrossExchangeArbitrageConfig(
+        id="test",
+        total_amount_quote=Decimal("5"),
+        max_trade_amount_quote=Decimal("5"),
+        max_completed_trades_per_day=1,
+        paper_test_force_execution=True,
+    )
+    controller = make_controller(config)
+    controller.market_data_provider.quantize_order_amount.return_value = Decimal("0.0001")
+
+    actions = controller.determine_executor_actions()
+
+    assert len(actions) == 1
+    assert actions[0].executor_config.min_profitability == Decimal("-1")
+    assert actions[0].executor_config.buying_market.connector_name.endswith("_paper_trade")
+    assert actions[0].executor_config.selling_market.connector_name.endswith("_paper_trade")
