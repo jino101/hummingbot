@@ -405,14 +405,18 @@ class ArbitrageExecutor(ExecutorBase):
         decision = decide_one_leg_recovery(
             buy_status=buy_status,
             sell_status=sell_status,
-            auto_hedge_enabled=bool(getattr(self.config, "auto_hedge_enabled", False)),
+            auto_hedge_enabled=getattr(self.config, "auto_hedge_enabled", False) is True,
         )
         self.logger().warning(
             f"Arbitrage one-leg recovery: action={decision.action.value}; reason={decision.reason}"
         )
 
         if decision.action == RecoveryAction.NONE:
-            self.close_type = CloseType.FAILED
+            self.close_type = (
+                CloseType.COMPLETED
+                if buy_status == LegStatus.FILLED and sell_status == LegStatus.FILLED
+                else CloseType.FAILED
+            )
             self.stop()
             return
 
@@ -447,7 +451,7 @@ class ArbitrageExecutor(ExecutorBase):
             return
 
     def process_order_canceled_event(self, _, market, event: OrderCancelledEvent):
-        if not bool(getattr(self.config, "one_leg_recovery_enabled", False)):
+        if getattr(self.config, "one_leg_recovery_enabled", False) is not True:
             return
         if self.buy_order.order_id == event.order_id:
             self._apply_one_leg_recovery(
@@ -461,7 +465,7 @@ class ArbitrageExecutor(ExecutorBase):
             )
 
     def process_order_failed_event(self, _, market, event: MarketOrderFailureEvent):
-        if bool(getattr(self.config, "one_leg_recovery_enabled", False)):
+        if getattr(self.config, "one_leg_recovery_enabled", False) is True:
             if self.buy_order.order_id == event.order_id:
                 self._apply_one_leg_recovery(
                     LegStatus.FAILED,
