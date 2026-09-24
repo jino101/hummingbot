@@ -102,6 +102,7 @@ class JinoCrossExchangeArbitrageController(ArbitrageController):
     def __init__(self, config: JinoCrossExchangeArbitrageConfig, *args, **kwargs):
         super().__init__(config, *args, **kwargs)
         self.config = config
+        self._last_live_readiness_probe_at = 0.0
 
     def _completed_executors_today(self):
         now = self.market_data_provider.time()
@@ -138,6 +139,12 @@ class JinoCrossExchangeArbitrageController(ArbitrageController):
             self.processed_data["live_readiness"] = None
             return
 
+        now = self.market_data_provider.time()
+        current = self.processed_data.get("live_readiness")
+        probe_interval = min(30.0, max(10.0, self.config.live_readiness_max_age_seconds / 2))
+        if current and now - self._last_live_readiness_probe_at < probe_interval:
+            return
+
         connector_names = [
             self.config.exchange_pair_1.connector_name,
             self.config.exchange_pair_2.connector_name,
@@ -159,6 +166,7 @@ class JinoCrossExchangeArbitrageController(ArbitrageController):
                 quote_conversion_asset=self.config.quote_conversion_asset,
                 max_age_seconds=self.config.live_readiness_max_age_seconds,
             )
+            self._last_live_readiness_probe_at = now
             self.processed_data["live_readiness"] = {
                 "ready": report.ready,
                 "reasons": report.reasons,
@@ -166,6 +174,7 @@ class JinoCrossExchangeArbitrageController(ArbitrageController):
                 "checked_at": report.checked_at,
             }
         except Exception as exc:
+            self._last_live_readiness_probe_at = now
             self.logger().error(f"Jino live-readiness probe failed: {exc}")
             self.processed_data["live_readiness"] = {
                 "ready": False,
