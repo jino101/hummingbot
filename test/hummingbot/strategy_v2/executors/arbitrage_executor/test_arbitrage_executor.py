@@ -8,6 +8,7 @@ from hummingbot.core.data_type.common import OrderType, TradeType
 from hummingbot.core.data_type.trade_fee import AddedToCostTradeFee
 from hummingbot.core.event.events import (
     MarketOrderFailureEvent,
+    OrderCancelledEvent,
     OrderFilledEvent,
     SellOrderCompletedEvent,
     SellOrderCreatedEvent,
@@ -202,3 +203,65 @@ class TestArbitrageExecutor(IsolatedAsyncioWrapperTestCase, LoggerMixinForTest):
 
         self.assertTrue(self.executor.sell_order.order.is_filled)
         self.assertEqual(self.executor.sell_order.order.executed_amount_base, Decimal("0.001"))
+
+
+    def test_one_leg_recovery_preserves_exposure_instead_of_retrying(self):
+        self.executor.config.one_leg_recovery_enabled = True
+        self.executor.config.auto_hedge_enabled = False
+        self.executor.buy_order.order_id = "BUY"
+        self.executor.sell_order.order_id = "SELL"
+
+        self.executor.buy_order.order = MagicMock()
+        self.executor.buy_order.order.is_filled = True
+        self.executor.buy_order.order.is_done = True
+        self.executor.buy_order.order.executed_amount_base = Decimal("1")
+        self.executor.buy_order.order.executed_amount_base = Decimal("1")
+
+        event = MarketOrderFailureEvent(
+            timestamp=1,
+            order_id="SELL",
+            order_type=OrderType.MARKET,
+        )
+        self.executor.process_order_failed_event(None, MagicMock(), event)
+
+        self.assertEqual(self.executor.close_type, CloseType.POSITION_HOLD)
+        self.assertEqual(self.executor.status, RunnableStatus.TERMINATED)
+        self.strategy.sell.assert_not_called()
+
+    def test_one_leg_recovery_cancels_other_pending_leg_after_failure(self):
+        self.executor.config.one_leg_recovery_enabled = True
+        self.executor.config.auto_hedge_enabled = False
+        self.executor.buy_order.order_id = "BUY"
+        self.executor.sell_order.order_id = "SELL"
+
+        event = MarketOrderFailureEvent(
+            timestamp=1,
+            order_id="BUY",
+            order_type=OrderType.MARKET,
+        )
+        self.executor.process_order_failed_event(None, MagicMock(), event)
+
+        self.strategy.cancel.assert_called_once_with(
+            self.executor.selling_market.connector_name,
+            self.executor.selling_market.trading_pair,
+            "SELL",
+        )
+        self.assertEqual(self.executor.close_type, CloseType.FAILED)
+        self.assertEqual(self.executor.status, RunnableStatus.TERMINATED)
+
+    def test_cancelled_leg_with_partial_opposite_leg_escalates_to_position_hold(self):
+        self.executor.config.one_leg_recovery_enabled = True
+        self.executor.config.auto_hedge_enabled = False
+        self.executor.buy_order.order_id = "BUY"
+        self.executor.sell_order.order_id = "SELL"
+
+        self.executor.sell_order.order = MagicMock()
+        self.executor.sell_order.order.is_filled = False
+        self.executor.sell_order.order.is_done = False
+        self.executor.sell_order.order.executed_amount_base = Decimal("0.4")
+
+        event = OrderCancelledEvent(timestamp=1, order_id="BUY")
+        self.executor.process_order_canceled_event(None, MagicMock(), event)
+
+        self.assertEqual(self.executor.close_type, CloseType.POSITION_HOLD)
+        self.assertEqual(self.executor.status, RunnableStatus.TERMINATED)
