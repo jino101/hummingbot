@@ -62,9 +62,9 @@ class NetworkSnapshot:
 class ApiPermissionSnapshot:
     exchange: str
     observed_at: float
-    can_read: bool
-    can_spot_trade: bool
-    can_withdraw: bool
+    can_read: Optional[bool]
+    can_spot_trade: Optional[bool]
+    can_withdraw: Optional[bool]
 
     def is_fresh(self, now: float, max_age_seconds: float) -> bool:
         age = now - self.observed_at
@@ -164,23 +164,37 @@ def parse_binance_permissions(payload, observed_at: float) -> ApiPermissionSnaps
     return ApiPermissionSnapshot(
         exchange="binance",
         observed_at=observed_at,
-        can_read=payload.get("enableReading") is True,
-        can_spot_trade=payload.get("enableSpotAndMarginTrading") is True,
-        can_withdraw=payload.get("enableWithdrawals") is True,
+        can_read=payload.get("enableReading") if isinstance(payload.get("enableReading"), bool) else None,
+        can_spot_trade=(
+            payload.get("enableSpotAndMarginTrading")
+            if isinstance(payload.get("enableSpotAndMarginTrading"), bool)
+            else None
+        ),
+        can_withdraw=payload.get("enableWithdrawals") if isinstance(payload.get("enableWithdrawals"), bool) else None,
     )
 
 
 def parse_kucoin_permissions(payload, observed_at: float) -> ApiPermissionSnapshot:
     data = payload.get("data", {}) if isinstance(payload, dict) else {}
-    raw_permissions = data.get("permission", "")
-    tokens = {item.strip().lower() for item in str(raw_permissions).split(",") if item.strip()}
+    raw_permissions = data.get("permission")
+    if raw_permissions is None:
+        tokens = None
+    elif isinstance(raw_permissions, (list, tuple, set)):
+        tokens = {str(item).strip().lower() for item in raw_permissions if str(item).strip()}
+    else:
+        tokens = {item.strip().lower() for item in str(raw_permissions).split(",") if item.strip()}
+
     return ApiPermissionSnapshot(
         exchange="kucoin",
         observed_at=observed_at,
-        can_read="general" in tokens,
-        can_spot_trade="spot" in tokens or "unified" in tokens,
+        can_read=None if tokens is None else "general" in tokens,
+        can_spot_trade=None if tokens is None else ("spot" in tokens or "unified" in tokens),
         # KuCoin has used both Withdrawal and Transfer naming for withdrawal-capable keys.
-        can_withdraw="withdrawal" in tokens or "withdraw" in tokens or "transfer" in tokens,
+        can_withdraw=(
+            None
+            if tokens is None
+            else ("withdrawal" in tokens or "withdraw" in tokens or "transfer" in tokens)
+        ),
     )
 
 
@@ -293,12 +307,14 @@ def assess_live_readiness(
         else:
             if not permission.is_fresh(now, max_age_seconds):
                 reasons.append(f"{name}: API permission status is stale")
-            if not permission.can_read:
-                reasons.append(f"{name}: API key lacks read permission")
-            if not permission.can_spot_trade:
-                reasons.append(f"{name}: API key lacks spot-trading permission")
-            if permission.can_withdraw:
+            if permission.can_read is not True:
+                reasons.append(f"{name}: API read permission could not be verified")
+            if permission.can_spot_trade is not True:
+                reasons.append(f"{name}: API spot-trading permission could not be verified")
+            if permission.can_withdraw is True:
                 reasons.append(f"{name}: API withdrawal permission must be disabled")
+            elif permission.can_withdraw is not False:
+                reasons.append(f"{name}: API withdrawal permission could not be verified")
 
         network_snapshot = network_snapshots.get(name)
         if network_snapshot is None:
