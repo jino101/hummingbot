@@ -204,3 +204,23 @@ async def test_collect_live_readiness_uses_live_connectors_and_fails_closed_on_p
         "USDT",
     )
     assert report.ready is True
+
+
+def test_unknown_permissions_fail_closed():
+    now, permissions, networks, balances = _healthy_report_inputs()
+    permissions["kucoin"] = parse_kucoin_permissions({"data": {}}, observed_at=now)
+
+    report = assess_live_readiness(
+        connector_names=["binance", "kucoin"],
+        trading_pair="BTC-USDT",
+        total_amount_quote=Decimal("25"),
+        asset_quote_price=Decimal("100000"),
+        connector_ready={"binance": True, "kucoin": True},
+        permissions=permissions,
+        network_snapshots=networks,
+        balances=balances,
+        now=now,
+    )
+
+    assert report.ready is False
+    assert any("withdrawal permission could not be verified" in reason for reason in report.reasons)
