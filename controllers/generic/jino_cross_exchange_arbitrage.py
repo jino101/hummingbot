@@ -6,6 +6,7 @@ from pydantic import Field, field_validator, model_validator
 from controllers.generic.arbitrage_controller import ArbitrageController, ArbitrageControllerConfig
 from hummingbot.strategy_v2.executors.data_types import ConnectorPair
 from hummingbot.strategy_v2.models.executor_actions import ExecutorAction
+from hummingbot.jino_arbitrage.live_checks import collect_live_readiness
 
 
 class JinoCrossExchangeArbitrageConfig(ArbitrageControllerConfig):
@@ -35,6 +36,7 @@ class JinoCrossExchangeArbitrageConfig(ArbitrageControllerConfig):
     max_daily_loss_quote: Decimal = Field(default=Decimal("25"), ge=Decimal("0"))
     max_completed_trades_per_day: int = Field(default=100, ge=1)
     paper_test_force_execution: bool = False
+    live_readiness_max_age_seconds: int = Field(default=120, ge=10, le=3600)
 
     @field_validator("exchange_pair_1", "exchange_pair_2")
     @classmethod
@@ -131,7 +133,63 @@ class JinoCrossExchangeArbitrageController(ArbitrageController):
 
         return ""
 
+    async def update_processed_data(self):
+        if self.config.safety_mode != "live":
+            self.processed_data["live_readiness"] = None
+            return
+
+        connector_names = [
+            self.config.exchange_pair_1.connector_name,
+            self.config.exchange_pair_2.connector_name,
+        ]
+        if self.config.exchange_pair_1.trading_pair != self.config.exchange_pair_2.trading_pair:
+            self.processed_data["live_readiness"] = {
+                "ready": False,
+                "reasons": ("live readiness requires identical trading pairs on both exchanges",),
+                "common_rebalance_networks": (),
+            }
+            return
+
+        try:
+            report = await collect_live_readiness(
+                market_data_provider=self.market_data_provider,
+                connector_names=connector_names,
+                trading_pair=self.config.exchange_pair_1.trading_pair,
+                total_amount_quote=self.config.total_amount_quote,
+                quote_conversion_asset=self.config.quote_conversion_asset,
+                max_age_seconds=self.config.live_readiness_max_age_seconds,
+            )
+            self.processed_data["live_readiness"] = {
+                "ready": report.ready,
+                "reasons": report.reasons,
+                "common_rebalance_networks": report.common_rebalance_networks,
+                "checked_at": report.checked_at,
+            }
+        except Exception as exc:
+            self.logger().error(f"Jino live-readiness probe failed: {exc}")
+            self.processed_data["live_readiness"] = {
+                "ready": False,
+                "reasons": (f"live-readiness probe failed: {exc}",),
+                "common_rebalance_networks": (),
+            }
+
+    def _live_readiness_gate_reason(self) -> str:
+        if self.config.safety_mode != "live":
+            return ""
+        report = self.processed_data.get("live_readiness")
+        if not report:
+            return "live readiness has not been verified"
+        if report.get("ready") is not True:
+            reasons = report.get("reasons") or ("live readiness failed",)
+            return "live readiness failed: " + "; ".join(str(reason) for reason in reasons)
+        return ""
+
     def determine_executor_actions(self) -> List[ExecutorAction]:
+        live_reason = self._live_readiness_gate_reason()
+        if live_reason:
+            self.logger().warning(f"Jino arbitrage live gate: {live_reason}. No executor will be created.")
+            return []
+
         reason = self._risk_gate_reason()
         if reason:
             self.logger().warning(f"Jino arbitrage safety gate: {reason}. No new executor will be created.")
@@ -171,6 +229,7 @@ class JinoCrossExchangeArbitrageController(ArbitrageController):
             "daily_realized_pnl_quote": str(self._daily_realized_pnl_quote()),
             "risk_gate": self._risk_gate_reason() or "clear",
             "paper_test_force_execution": self.config.paper_test_force_execution,
+            "live_readiness": self.processed_data.get("live_readiness"),
         }
 
     def to_format_status(self) -> List[str]:
@@ -183,6 +242,7 @@ class JinoCrossExchangeArbitrageController(ArbitrageController):
             f"trade_cap={info['trade_cap_quote']} {self.config.quote_conversion_asset} | "
             f"daily_pnl={info['daily_realized_pnl_quote']} {self.config.quote_conversion_asset} | "
             f"completed={info['completed_trades_today']}/{info['completed_trade_limit']} | "
-            f"gate={info['risk_gate']}"
+            f"gate={info['risk_gate']} | "
+            f"live_ready={None if info['live_readiness'] is None else info['live_readiness'].get('ready')}"
         )
         return lines
