@@ -205,6 +205,12 @@ class JinoCrossExchangeArbitrageController(ArbitrageController):
 
     def create_arbitrage_executor_action(self, buying_exchange_pair, selling_exchange_pair):
         action = super().create_arbitrage_executor_action(buying_exchange_pair, selling_exchange_pair)
+        if action is not None:
+            action.executor_config.one_leg_recovery_enabled = True
+            # Automatic third-order hedging stays disabled. One-leg/partial-fill exposure
+            # is preserved and escalated rather than silently adding another live order.
+            action.executor_config.auto_hedge_enabled = False
+
         if action is not None and self.config.paper_test_force_execution:
             # A deliberately negative threshold guarantees the paper executor reaches
             # the order-placement path once valid quotes/fees are available. This is
