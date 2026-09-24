@@ -200,3 +200,48 @@ def test_force_execution_creates_single_paper_executor_with_test_threshold():
     assert actions[0].executor_config.min_profitability == Decimal("-1")
     assert actions[0].executor_config.buying_market.connector_name.endswith("_paper_trade")
     assert actions[0].executor_config.selling_market.connector_name.endswith("_paper_trade")
+
+
+def live_config():
+    return JinoCrossExchangeArbitrageConfig(
+        id="live-test",
+        safety_mode="live",
+        exchange_pair_1=ConnectorPair(connector_name="binance", trading_pair="BTC-USDT"),
+        exchange_pair_2=ConnectorPair(connector_name="kucoin", trading_pair="BTC-USDT"),
+        rate_connector="binance",
+        total_amount_quote=Decimal("10"),
+        max_trade_amount_quote=Decimal("10"),
+    )
+
+
+def test_live_mode_blocks_until_readiness_is_verified():
+    controller = make_controller(live_config())
+    controller.market_data_provider.quantize_order_amount.return_value = Decimal("0.0001")
+    assert controller.determine_executor_actions() == []
+
+
+def test_live_mode_allows_executor_only_after_readiness_passes():
+    controller = make_controller(live_config())
+    controller.market_data_provider.quantize_order_amount.return_value = Decimal("0.0001")
+    controller.processed_data["live_readiness"] = {
+        "ready": True,
+        "reasons": (),
+        "common_rebalance_networks": ("BITCOIN",),
+    }
+
+    actions = controller.determine_executor_actions()
+
+    assert len(actions) == 2
+    assert all(action.executor_config.one_leg_recovery_enabled for action in actions)
+    assert all(not action.executor_config.auto_hedge_enabled for action in actions)
+
+
+def test_live_mode_blocks_on_failed_readiness_reason():
+    controller = make_controller(live_config())
+    controller.processed_data["live_readiness"] = {
+        "ready": False,
+        "reasons": ("kucoin: API withdrawal permission must be disabled",),
+        "common_rebalance_networks": (),
+    }
+    assert controller.determine_executor_actions() == []
+    assert "withdrawal permission" in controller._live_readiness_gate_reason()
