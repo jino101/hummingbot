@@ -10,12 +10,14 @@ from hummingbot.core.event.events import (
     BuyOrderCompletedEvent,
     BuyOrderCreatedEvent,
     MarketOrderFailureEvent,
+    OrderCancelledEvent,
     OrderFilledEvent,
     SellOrderCompletedEvent,
     SellOrderCreatedEvent,
 )
 from hummingbot.core.rate_oracle.rate_oracle import RateOracle
 from hummingbot.logger import HummingbotLogger
+from hummingbot.jino_arbitrage.recovery import LegStatus, RecoveryAction, decide_one_leg_recovery
 from hummingbot.strategy.strategy_v2_base import StrategyV2Base
 from hummingbot.strategy_v2.executors.arbitrage_executor.data_types import ArbitrageExecutorConfig
 from hummingbot.strategy_v2.executors.executor_base import ExecutorBase
@@ -388,7 +390,90 @@ class ArbitrageExecutor(ExecutorBase):
         )
         self.check_order_status()
 
+    @staticmethod
+    def _tracked_leg_status(tracked_order: TrackedOrder) -> LegStatus:
+        if tracked_order.order is not None:
+            if tracked_order.order.is_filled:
+                return LegStatus.FILLED
+            if tracked_order.executed_amount_base > 0:
+                return LegStatus.PARTIAL
+            if tracked_order.order.is_done:
+                return LegStatus.CANCELLED
+        return LegStatus.PENDING
+
+    def _apply_one_leg_recovery(self, buy_status: LegStatus, sell_status: LegStatus):
+        decision = decide_one_leg_recovery(
+            buy_status=buy_status,
+            sell_status=sell_status,
+            auto_hedge_enabled=bool(getattr(self.config, "auto_hedge_enabled", False)),
+        )
+        self.logger().warning(
+            f"Arbitrage one-leg recovery: action={decision.action.value}; reason={decision.reason}"
+        )
+
+        if decision.action == RecoveryAction.NONE:
+            self.close_type = CloseType.FAILED
+            self.stop()
+            return
+
+        if decision.action == RecoveryAction.CANCEL_OPEN_LEG:
+            if buy_status == LegStatus.PENDING and self.buy_order.order_id:
+                self._strategy.cancel(
+                    self.buying_market.connector_name,
+                    self.buying_market.trading_pair,
+                    self.buy_order.order_id,
+                )
+            if sell_status == LegStatus.PENDING and self.sell_order.order_id:
+                self._strategy.cancel(
+                    self.selling_market.connector_name,
+                    self.selling_market.trading_pair,
+                    self.sell_order.order_id,
+                )
+            self.close_type = CloseType.FAILED
+            self.stop()
+            return
+
+        if decision.action in {
+            RecoveryAction.MANUAL_INTERVENTION,
+            RecoveryAction.HEDGE_BUY_LEG,
+            RecoveryAction.HEDGE_SELL_LEG,
+        }:
+            # Automatic hedge placement is intentionally not implemented here.
+            # Jino live mode keeps auto_hedge_enabled=False and preserves the
+            # exposed position for explicit operator recovery instead of placing
+            # an unreviewed third order.
+            self.close_type = CloseType.POSITION_HOLD
+            self.stop()
+            return
+
+    def process_order_canceled_event(self, _, market, event: OrderCancelledEvent):
+        if not bool(getattr(self.config, "one_leg_recovery_enabled", False)):
+            return
+        if self.buy_order.order_id == event.order_id:
+            self._apply_one_leg_recovery(
+                LegStatus.CANCELLED,
+                self._tracked_leg_status(self.sell_order),
+            )
+        elif self.sell_order.order_id == event.order_id:
+            self._apply_one_leg_recovery(
+                self._tracked_leg_status(self.buy_order),
+                LegStatus.CANCELLED,
+            )
+
     def process_order_failed_event(self, _, market, event: MarketOrderFailureEvent):
+        if bool(getattr(self.config, "one_leg_recovery_enabled", False)):
+            if self.buy_order.order_id == event.order_id:
+                self._apply_one_leg_recovery(
+                    LegStatus.FAILED,
+                    self._tracked_leg_status(self.sell_order),
+                )
+            elif self.sell_order.order_id == event.order_id:
+                self._apply_one_leg_recovery(
+                    self._tracked_leg_status(self.buy_order),
+                    LegStatus.FAILED,
+                )
+            return
+
         if self.buy_order.order_id == event.order_id:
             self.place_buy_arbitrage_order()
             self._cumulative_failures += 1
