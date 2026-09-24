@@ -200,3 +200,37 @@ Before any live-key test, finish and validate:
 2. one-leg/partial-fill recovery integration, with automatic hedging disabled by default;
 3. a small live-readiness gate that refuses live mode unless those checks are available and healthy;
 4. only then, an explicitly opted-in tiny live test with withdrawal permissions disabled.
+
+
+### Live-readiness and recovery implementation
+
+The branch now contains a fail-closed live gate for the Binance/KuCoin path:
+
+- authenticated API-permission probes;
+- base-asset deposit/withdraw network discovery and network alias normalization;
+- withdrawal-fee conversion to the configured quote asset;
+- common bidirectional rebalance-network requirement;
+- connector-health and pre-positioned balance checks;
+- API keys must support read + spot trading;
+- API withdrawal permission must be disabled;
+- unknown, stale, unsupported, or failed readiness probes block new live executors;
+- Jino-created arbitrage executors enable one-leg recovery handling;
+- a failed/cancelled leg cancels a still-pending opposite leg;
+- a filled or partially-filled exposed leg is preserved as POSITION_HOLD for explicit operator handling;
+- automatic third-order hedging is intentionally disabled.
+
+The tiny live harness is intentionally opt-in and capped:
+
+```bash
+JINO_CONFIRM_TINY_LIVE=I_UNDERSTAND_LIVE_TRADING \
+JINO_LIVE_QUOTE_AMOUNT=10 \
+bash scripts/jino_arbitrage_tiny_live.sh
+```
+
+The helper refuses amounts above 25 USDT, limits the controller to one completed trade, and stops if
+the live-readiness gate reports false. It must not be run until exchange keys are configured with
+withdrawal permission disabled.
+
+The live harness itself can be syntax/unit tested without real credentials. A real live execution
+cannot be validated in CI because it requires the operator's exchange accounts, API keys, balances,
+and current exchange/network state.
