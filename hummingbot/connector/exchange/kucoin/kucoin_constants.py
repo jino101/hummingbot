@@ -29,6 +29,9 @@ FILLS_PATH_URL = "/api/v1/fills"
 FILLS_PATH_URL_HFT = "/api/v1/hf/fills"
 LIMIT_FILLS_PATH_URL = "/api/v1/limit/fills"
 ORDER_CLIENT_ORDER_PATH_URL = "/api/v1/order/client-order"
+# Endpoints used by Jino's fail-closed live-readiness probe.
+CURRENCY_DETAIL_PATH_URL = "/api/v3/currencies/{asset}"
+API_KEY_INFO_PATH_URL = "/api/v1/user/api-key"
 
 WS_CONNECTION_LIMIT_ID = "WSConnection"
 WS_CONNECTION_LIMIT = 30
@@ -61,6 +64,8 @@ RATE_LIMITS = [
     RateLimit(limit_id=ALL_TICKERS_PATH_URL, limit=NO_LIMIT, time_interval=1),
     RateLimit(limit_id=LIMIT_FILLS_PATH_URL, limit=NO_LIMIT, time_interval=1),
     RateLimit(limit_id=ORDER_CLIENT_ORDER_PATH_URL, limit=NO_LIMIT, time_interval=1),
+    RateLimit(limit_id=CURRENCY_DETAIL_PATH_URL, limit=NO_LIMIT, time_interval=1),
+    RateLimit(limit_id=API_KEY_INFO_PATH_URL, limit=NO_LIMIT, time_interval=1),
     RateLimit(limit_id=POST_ORDER_LIMIT_ID, limit=45, time_interval=3),
     RateLimit(limit_id=DELETE_ORDER_LIMIT_ID, limit=60, time_interval=3),
     RateLimit(limit_id=ORDERS_PATH_URL, limit=45, time_interval=3),
