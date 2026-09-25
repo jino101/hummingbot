@@ -1,0 +1,20 @@
+:root{font-family:Inter,system-ui,-apple-system,sans-serif;background:#070b14;color:#f5f7fb;color-scheme:dark}
+*{box-sizing:border-box}body{margin:0;background:linear-gradient(180deg,#0b1020,#070b14 45%);min-height:100vh}
+main{max-width:760px;margin:auto;padding:20px 16px 48px}
+header{display:flex;align-items:center;justify-content:space-between;padding:8px 4px 18px}
+h1{margin:0;font-size:34px;letter-spacing:.18em}header p{margin:4px 0 0;color:#8995aa}
+.pill{padding:7px 12px;border-radius:999px;background:#182137;border:1px solid #273552;text-transform:uppercase;font-size:12px}
+.grid{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.card{background:rgba(18,25,42,.94);border:1px solid #27314a;border-radius:18px;padding:16px;margin-bottom:12px;box-shadow:0 12px 36px rgba(0,0,0,.18)}
+.grid .card{margin:0}.hero{grid-column:span 2}
+.label,.muted{color:#8f9bb0}.big{font-size:28px;font-weight:800;margin:6px 0}.section-title{font-size:17px;font-weight:800;margin-bottom:12px}
+.row{display:flex;justify-content:space-between;padding:9px 0;border-bottom:1px solid #27314a}.row:last-of-type{border:0}
+.danger{width:100%;margin-top:14px;border:0;border-radius:14px;padding:14px;font-weight:800;background:#c63146;color:white}.danger:disabled{opacity:.5}
+.small{font-size:12px}.empty{padding:18px 0;color:#8f9bb0}
+.opp{display:grid;grid-template-columns:1fr auto;gap:8px;padding:10px 0;border-bottom:1px solid #27314a}.opp:last-child{border:0}
+.good{color:#6ee7a8}.bad{color:#ff8091}.history{max-height:340px;overflow:auto}
+.hist{padding:10px 0;border-bottom:1px solid #27314a;font-size:13px}.hist:last-child{border:0}
+footer{text-align:center;color:#69768c;font-size:12px;margin-top:18px}
+@media(min-width:700px){.grid{grid-template-columns:2fr 1fr 1fr 1fr}.hero{grid-column:span 1}}
+
+.token-input{width:100%;padding:13px 14px;margin:8px 0 12px;border-radius:12px;border:1px solid #35415d;background:#0a1020;color:#fff;font-size:16px}#loginButton{width:100%;padding:13px;border:0;border-radius:12px;font-weight:800;background:#627eea;color:#fff}code{color:#b9c6ff}

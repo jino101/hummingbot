@@ -11,3 +11,5 @@ class ArbitrageExecutorConfig(ExecutorConfigBase):
     order_amount: Decimal
     min_profitability: Decimal
     gas_conversion_price: Optional[Decimal] = None
+    one_leg_recovery_enabled: bool = False
+    auto_hedge_enabled: bool = False

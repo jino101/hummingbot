@@ -4,8 +4,15 @@ from test.logger_mixin_for_test import LoggerMixinForTest
 from unittest.mock import MagicMock, Mock, PropertyMock, patch
 
 from hummingbot.connector.connector_base import ConnectorBase
-from hummingbot.core.data_type.common import OrderType
-from hummingbot.core.event.events import MarketOrderFailureEvent
+from hummingbot.core.data_type.common import OrderType, TradeType
+from hummingbot.core.data_type.trade_fee import AddedToCostTradeFee
+from hummingbot.core.event.events import (
+    MarketOrderFailureEvent,
+    OrderCancelledEvent,
+    OrderFilledEvent,
+    SellOrderCompletedEvent,
+    SellOrderCreatedEvent,
+)
 from hummingbot.strategy.strategy_v2_base import StrategyV2Base
 from hummingbot.strategy_v2.executors.arbitrage_executor.arbitrage_executor import ArbitrageExecutor
 from hummingbot.strategy_v2.executors.arbitrage_executor.data_types import ArbitrageExecutorConfig
@@ -135,3 +142,126 @@ class TestArbitrageExecutor(IsolatedAsyncioWrapperTestCase, LoggerMixinForTest):
         )
         self.executor.process_order_failed_event("102", market, sell_order_failed_event)
         self.assertEqual(self.executor._cumulative_failures, 2)
+
+
+    def test_paper_sell_order_created_uses_synthetic_tracker(self):
+        self.executor.selling_market = ConnectorPair(connector_name="kucoin_paper_trade", trading_pair="BTC-USDT")
+        self.executor.sell_order.order_id = "sell://BTC-USDT/test"
+        event = SellOrderCreatedEvent(
+            timestamp=1,
+            type=OrderType.MARKET,
+            trading_pair="BTC-USDT",
+            amount=Decimal("0.001"),
+            price=Decimal("0"),
+            order_id=self.executor.sell_order.order_id,
+            creation_timestamp=1,
+        )
+
+        self.executor.process_order_created_event(None, MagicMock(), event)
+
+        self.assertIsNotNone(self.executor.sell_order.order)
+        self.assertEqual(self.executor.sell_order.order.client_order_id, self.executor.sell_order.order_id)
+        self.assertIn(self.executor.sell_order.order_id, self.executor._synthetic_paper_order_ids)
+
+    def test_paper_fill_and_completion_update_synthetic_order(self):
+        self.executor.selling_market = ConnectorPair(connector_name="kucoin_paper_trade", trading_pair="BTC-USDT")
+        self.executor.sell_order.order_id = "sell://BTC-USDT/test"
+        created = SellOrderCreatedEvent(
+            timestamp=1,
+            type=OrderType.MARKET,
+            trading_pair="BTC-USDT",
+            amount=Decimal("0.001"),
+            price=Decimal("0"),
+            order_id=self.executor.sell_order.order_id,
+            creation_timestamp=1,
+        )
+        self.executor.process_order_created_event(None, MagicMock(), created)
+
+        fill = OrderFilledEvent(
+            timestamp=2,
+            order_id=self.executor.sell_order.order_id,
+            trading_pair="BTC-USDT",
+            trade_type=TradeType.SELL,
+            order_type=OrderType.MARKET,
+            price=Decimal("100000"),
+            amount=Decimal("0.001"),
+            trade_fee=AddedToCostTradeFee(percent=Decimal("0")),
+            exchange_trade_id="trade-1",
+        )
+        self.executor.process_order_filled_event(None, MagicMock(), fill)
+
+        completed = SellOrderCompletedEvent(
+            timestamp=3,
+            order_id=self.executor.sell_order.order_id,
+            base_asset="BTC",
+            quote_asset="USDT",
+            base_asset_amount=Decimal("0.001"),
+            quote_asset_amount=Decimal("100"),
+            order_type=OrderType.MARKET,
+        )
+        self.executor.process_order_completed_event(None, MagicMock(), completed)
+
+        self.assertTrue(self.executor.sell_order.order.is_filled)
+        self.assertEqual(self.executor.sell_order.order.executed_amount_base, Decimal("0.001"))
+
+
+    def test_one_leg_recovery_preserves_exposure_instead_of_retrying(self):
+        self.executor.config.one_leg_recovery_enabled = True
+        self.executor.config.auto_hedge_enabled = False
+        self.executor.buy_order.order_id = "BUY"
+        self.executor.sell_order.order_id = "SELL"
+
+        self.executor.buy_order.order = MagicMock()
+        self.executor.buy_order.order.is_filled = True
+        self.executor.buy_order.order.is_done = True
+        self.executor.buy_order.order.executed_amount_base = Decimal("1")
+        self.executor.buy_order.order.executed_amount_base = Decimal("1")
+
+        event = MarketOrderFailureEvent(
+            timestamp=1,
+            order_id="SELL",
+            order_type=OrderType.MARKET,
+        )
+        self.executor.process_order_failed_event(None, MagicMock(), event)
+
+        self.assertEqual(self.executor.close_type, CloseType.POSITION_HOLD)
+        self.assertEqual(self.executor.status, RunnableStatus.TERMINATED)
+        self.strategy.sell.assert_not_called()
+
+    def test_one_leg_recovery_cancels_other_pending_leg_after_failure(self):
+        self.executor.config.one_leg_recovery_enabled = True
+        self.executor.config.auto_hedge_enabled = False
+        self.executor.buy_order.order_id = "BUY"
+        self.executor.sell_order.order_id = "SELL"
+
+        event = MarketOrderFailureEvent(
+            timestamp=1,
+            order_id="BUY",
+            order_type=OrderType.MARKET,
+        )
+        self.executor.process_order_failed_event(None, MagicMock(), event)
+
+        self.strategy.cancel.assert_called_once_with(
+            self.executor.selling_market.connector_name,
+            self.executor.selling_market.trading_pair,
+            "SELL",
+        )
+        self.assertEqual(self.executor.close_type, CloseType.FAILED)
+        self.assertEqual(self.executor.status, RunnableStatus.TERMINATED)
+
+    def test_cancelled_leg_with_partial_opposite_leg_escalates_to_position_hold(self):
+        self.executor.config.one_leg_recovery_enabled = True
+        self.executor.config.auto_hedge_enabled = False
+        self.executor.buy_order.order_id = "BUY"
+        self.executor.sell_order.order_id = "SELL"
+
+        self.executor.sell_order.order = MagicMock()
+        self.executor.sell_order.order.is_filled = False
+        self.executor.sell_order.order.is_done = False
+        self.executor.sell_order.order.executed_amount_base = Decimal("0.4")
+
+        event = OrderCancelledEvent(timestamp=1, order_id="BUY")
+        self.executor.process_order_canceled_event(None, MagicMock(), event)
+
+        self.assertEqual(self.executor.close_type, CloseType.POSITION_HOLD)
+        self.assertEqual(self.executor.status, RunnableStatus.TERMINATED)
