@@ -7,8 +7,9 @@ from pathlib import Path
 from jino_mobile.server import make_server
 
 
-def _request(url, method="GET"):
-    req = urllib.request.Request(url, method=method)
+def _request(url, method="GET", token=None):
+    headers = {"Authorization": f"Bearer {token}"} if token else {}
+    req = urllib.request.Request(url, method=method, headers=headers)
     try:
         with urllib.request.urlopen(req, timeout=3) as response:
             return response.status, json.loads(response.read().decode())
@@ -35,7 +36,8 @@ def test_dashboard_api_is_read_only_except_kill_switch(tmp_path):
     log.write_text(json.dumps({"timestamp": 123, "opportunities": []}) + "\n", encoding="utf-8")
     kill = tmp_path / "kill"
 
-    server = make_server("127.0.0.1", 0, web, latest, log, kill, quiet=True)
+    token = "test-token"
+    server = make_server("127.0.0.1", 0, web, latest, log, kill, token, quiet=True)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
     base = f"http://127.0.0.1:{server.server_port}"
@@ -46,20 +48,23 @@ def test_dashboard_api_is_read_only_except_kill_switch(tmp_path):
         assert body["kill_switch"] is False
 
         status, body = _request(base + "/api/status")
+        assert status == 401
+
+        status, body = _request(base + "/api/status", token=token)
         assert status == 200
         assert body["mode"] == "observe"
         assert body["runtime_kill_switch"] is False
 
-        status, body = _request(base + "/api/summary")
+        status, body = _request(base + "/api/summary", token=token)
         assert status == 200
         assert body["samples"] == 1
 
-        status, body = _request(base + "/api/kill-switch/enable", method="POST")
+        status, body = _request(base + "/api/kill-switch/enable", method="POST", token=token)
         assert status == 200
         assert body["kill_switch"] is True
         assert kill.exists()
 
-        status, body = _request(base + "/api/live/start", method="POST")
+        status, body = _request(base + "/api/live/start", method="POST", token=token)
         assert status == 403
         assert "cannot enable trading" in body["error"]
     finally:
