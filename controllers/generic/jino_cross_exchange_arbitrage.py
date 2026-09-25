@@ -1,4 +1,5 @@
 from decimal import Decimal
+from pathlib import Path
 from typing import List, Literal
 
 from pydantic import Field, field_validator, model_validator
@@ -7,6 +8,7 @@ from controllers.generic.arbitrage_controller import ArbitrageController, Arbitr
 from hummingbot.strategy_v2.executors.data_types import ConnectorPair
 from hummingbot.strategy_v2.models.executor_actions import ExecutorAction
 from hummingbot.jino_arbitrage.live_checks import collect_live_readiness, collect_observation_readiness
+from hummingbot.jino_arbitrage.observation_store import persist_observation_snapshot
 from hummingbot.jino_arbitrage.runtime_scanner import scan_provider_pair_for_quote_amount
 from hummingbot.jino_arbitrage.scanner import ScannerPolicy
 
@@ -33,7 +35,7 @@ class JinoCrossExchangeArbitrageConfig(ArbitrageControllerConfig):
     rate_connector: str = "binance_paper_trade"
     quote_conversion_asset: str = "USDT"
 
-    safety_mode: Literal["paper", "observe", "live"] = "paper"
+    safety_mode: Literal["paper", "observe", "readonly", "live"] = "paper"
     max_trade_amount_quote: Decimal = Field(default=Decimal("100"), gt=Decimal("0"))
     max_daily_loss_quote: Decimal = Field(default=Decimal("25"), ge=Decimal("0"))
     max_completed_trades_per_day: int = Field(default=100, ge=1)
@@ -420,6 +422,7 @@ class JinoCrossExchangeArbitrageController(ArbitrageController):
             "paper_test_force_execution": self.config.paper_test_force_execution,
             "live_readiness": self.processed_data.get("live_readiness"),
             "observation_readiness": self.processed_data.get("observation_readiness"),
+            "observation_pair_count": self.processed_data.get("observation_pair_count", 0),
             "observation_opportunities": self.processed_data.get("observation_opportunities", ()),
         }
 
