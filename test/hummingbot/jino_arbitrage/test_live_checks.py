@@ -274,3 +274,50 @@ def test_common_transfer_eta_uses_slower_exchange_estimate():
     estimates = build_common_transfer_estimates(snapshots)
     assert estimates[0].network == "BITCOIN"
     assert estimates[0].estimated_minutes == Decimal("9")
+
+
+def test_credential_free_observe_mode_uses_market_readiness_only():
+    report = __import__(
+        "hummingbot.jino_arbitrage.live_checks",
+        fromlist=["assess_observation_readiness"],
+    ).assess_observation_readiness(
+        connector_names=["binance_paper_trade", "kucoin_paper_trade"],
+        trading_pair="BTC-USDT",
+        total_amount_quote=Decimal("25"),
+        asset_quote_price=Decimal("100000"),
+        connector_ready={"binance_paper_trade": True, "kucoin_paper_trade": True},
+        permissions={},
+        network_snapshots={},
+        balances={},
+        now=1000,
+        credential_free=True,
+    )
+    assert report.safe_read_only is True
+    assert report.credential_free is True
+    assert report.market_data_ready is True
+    assert report.account_data_verified is False
+    assert report.transfer_route_verified is False
+    assert report.hypothetical_trade_feasible is True
+    assert report.common_rebalance_networks == ()
+    assert report.transfer_estimates == ()
+
+
+def test_credential_free_observe_mode_fails_market_readiness_if_connector_down():
+    report = __import__(
+        "hummingbot.jino_arbitrage.live_checks",
+        fromlist=["assess_observation_readiness"],
+    ).assess_observation_readiness(
+        connector_names=["binance_paper_trade", "kucoin_paper_trade"],
+        trading_pair="BTC-USDT",
+        total_amount_quote=Decimal("25"),
+        asset_quote_price=Decimal("100000"),
+        connector_ready={"binance_paper_trade": True, "kucoin_paper_trade": False},
+        permissions={},
+        network_snapshots={},
+        balances={},
+        now=1000,
+        credential_free=True,
+    )
+    assert report.market_data_ready is False
+    assert report.hypothetical_trade_feasible is False
+    assert any("public market-data connector is not ready" in reason for reason in report.reasons)
