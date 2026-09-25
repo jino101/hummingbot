@@ -79,6 +79,23 @@ class BalanceSnapshot:
 
 
 @dataclass(frozen=True)
+class NetworkTransferEstimate:
+    network: str
+    estimated_minutes: Optional[Decimal]
+    source: str
+
+
+@dataclass(frozen=True)
+class ObservationReport:
+    safe_read_only: bool
+    hypothetical_trade_feasible: bool
+    checked_at: float
+    reasons: Tuple[str, ...]
+    common_rebalance_networks: Tuple[str, ...] = ()
+    transfer_estimates: Tuple[NetworkTransferEstimate, ...] = ()
+
+
+@dataclass(frozen=True)
 class LiveReadinessReport:
     ready: bool
     checked_at: float
@@ -114,6 +131,16 @@ def parse_binance_network_statuses(
                 deposit_enabled=network.get("depositEnable") if isinstance(network.get("depositEnable"), bool) else None,
                 withdrawal_enabled=network.get("withdrawEnable") if isinstance(network.get("withdrawEnable"), bool) else None,
                 withdrawal_fee_quote=_fee_in_quote(fee_asset, asset_quote_price),
+                min_confirmations=(
+                    int(network.get("minConfirm"))
+                    if str(network.get("minConfirm", "")).isdigit()
+                    else None
+                ),
+                estimated_arrival_minutes=(
+                    _d(network.get("estimatedArrivalTime"))
+                    if network.get("estimatedArrivalTime") not in (None, "")
+                    else None
+                ),
             )
         )
     return tuple(item for item in result if item.network)
@@ -154,6 +181,11 @@ def parse_kucoin_network_statuses(
                 deposit_enabled=chain.get("isDepositEnabled") if isinstance(chain.get("isDepositEnabled"), bool) else None,
                 withdrawal_enabled=chain.get("isWithdrawEnabled") if isinstance(chain.get("isWithdrawEnabled"), bool) else None,
                 withdrawal_fee_quote=_fee_in_quote(fee_asset, asset_quote_price),
+                min_confirmations=(
+                    int(chain.get("confirms"))
+                    if str(chain.get("confirms", "")).isdigit()
+                    else None
+                ),
             )
         )
     return tuple(item for item in result if item.network)
@@ -274,6 +306,224 @@ def common_bidirectional_rebalance_networks(snapshots: Sequence[NetworkSnapshot]
         return ()
     sets = [_fully_enabled_network_names(snapshot) for snapshot in snapshots]
     return tuple(sorted(set.intersection(*sets))) if sets else ()
+
+
+_NOMINAL_BLOCK_SECONDS = {
+    "BITCOIN": Decimal("600"),
+    "ETHEREUM": Decimal("12"),
+    "TRON": Decimal("3"),
+    "BSC": Decimal("3"),
+    "ARBITRUM": Decimal("1"),
+    "OPTIMISM": Decimal("2"),
+    "POLYGON": Decimal("2"),
+    "SOLANA": Decimal("0.5"),
+}
+
+
+def estimate_network_transfer_minutes(network: NetworkStatus) -> NetworkTransferEstimate:
+    canonical = _canonical_network(network.network)
+    if network.estimated_arrival_minutes is not None and network.estimated_arrival_minutes > 0:
+        return NetworkTransferEstimate(
+            network=canonical,
+            estimated_minutes=network.estimated_arrival_minutes,
+            source="exchange_estimate",
+        )
+
+    block_seconds = _NOMINAL_BLOCK_SECONDS.get(canonical)
+    if block_seconds is not None and network.min_confirmations is not None and network.min_confirmations > 0:
+        minutes = (block_seconds * Decimal(network.min_confirmations)) / Decimal("60")
+        return NetworkTransferEstimate(
+            network=canonical,
+            estimated_minutes=minutes,
+            source="confirmation_estimate",
+        )
+
+    return NetworkTransferEstimate(network=canonical, estimated_minutes=None, source="unknown")
+
+
+def _network_by_canonical(snapshot: NetworkSnapshot) -> Dict[str, NetworkStatus]:
+    return {_canonical_network(item.network): item for item in snapshot.networks}
+
+
+def build_common_transfer_estimates(snapshots: Sequence[NetworkSnapshot]) -> Tuple[NetworkTransferEstimate, ...]:
+    common = common_bidirectional_rebalance_networks(snapshots)
+    if not common:
+        return ()
+
+    by_exchange = [_network_by_canonical(snapshot) for snapshot in snapshots]
+    estimates = []
+    for network in common:
+        per_venue = [
+            estimate_network_transfer_minutes(items[network])
+            for items in by_exchange
+            if network in items
+        ]
+        known = [item.estimated_minutes for item in per_venue if item.estimated_minutes is not None]
+        if known:
+            # Conservative: use the slower venue/network estimate.
+            estimates.append(
+                NetworkTransferEstimate(
+                    network=network,
+                    estimated_minutes=max(known),
+                    source="+".join(sorted(set(item.source for item in per_venue))),
+                )
+            )
+        else:
+            estimates.append(NetworkTransferEstimate(network=network, estimated_minutes=None, source="unknown"))
+    return tuple(estimates)
+
+
+def assess_observation_readiness(
+    connector_names: Sequence[str],
+    trading_pair: str,
+    total_amount_quote: Decimal,
+    asset_quote_price: Decimal,
+    connector_ready: Mapping[str, bool],
+    permissions: Mapping[str, ApiPermissionSnapshot],
+    network_snapshots: Mapping[str, NetworkSnapshot],
+    balances: Mapping[str, BalanceSnapshot],
+    now: float,
+    max_age_seconds: float = 120,
+) -> ObservationReport:
+    reasons = []
+    base_asset, quote_asset = trading_pair.split("-")
+    safe_read_only = True
+    hypothetical_trade_feasible = True
+
+    for name in connector_names:
+        if connector_ready.get(name) is not True:
+            reasons.append(f"{name}: connector is not ready")
+            hypothetical_trade_feasible = False
+
+        permission = permissions.get(name)
+        if permission is None or not permission.is_fresh(now, max_age_seconds):
+            reasons.append(f"{name}: API read-only permission status unavailable or stale")
+            safe_read_only = False
+        else:
+            if permission.can_read is not True:
+                reasons.append(f"{name}: API read permission could not be verified")
+                safe_read_only = False
+            if permission.can_spot_trade is True:
+                reasons.append(f"{name}: spot-trading permission is enabled; observe mode expects read-only keys")
+                safe_read_only = False
+            if permission.can_withdraw is True:
+                reasons.append(f"{name}: withdrawal permission is enabled; observe mode requires it disabled")
+                safe_read_only = False
+            if permission.can_spot_trade is None or permission.can_withdraw is None:
+                reasons.append(f"{name}: API permissions could not be proven read-only")
+                safe_read_only = False
+
+        network_snapshot = network_snapshots.get(name)
+        if (
+            network_snapshot is None
+            or not network_snapshot.is_fresh(now, max_age_seconds)
+            or not network_snapshot.networks
+        ):
+            reasons.append(f"{name}: {base_asset} network status unavailable or stale")
+            hypothetical_trade_feasible = False
+
+        balance = balances.get(name)
+        if balance is None:
+            reasons.append(f"{name}: balance status unavailable")
+            hypothetical_trade_feasible = False
+        else:
+            if balance.quote_available < total_amount_quote:
+                reasons.append(f"{name}: insufficient {quote_asset} for hypothetical buy side")
+                hypothetical_trade_feasible = False
+            if asset_quote_price <= 0 or balance.base_available * asset_quote_price < total_amount_quote:
+                reasons.append(f"{name}: insufficient {base_asset} for hypothetical sell side")
+                hypothetical_trade_feasible = False
+
+    snapshots = [
+        network_snapshots[name]
+        for name in connector_names
+        if name in network_snapshots and network_snapshots[name].is_fresh(now, max_age_seconds)
+    ]
+    common = common_bidirectional_rebalance_networks(snapshots) if len(snapshots) == len(connector_names) else ()
+    if not common:
+        reasons.append(f"no common bidirectional {base_asset} transfer network")
+        hypothetical_trade_feasible = False
+
+    return ObservationReport(
+        safe_read_only=safe_read_only,
+        hypothetical_trade_feasible=hypothetical_trade_feasible,
+        checked_at=now,
+        reasons=tuple(dict.fromkeys(reasons)),
+        common_rebalance_networks=common,
+        transfer_estimates=build_common_transfer_estimates(snapshots),
+    )
+
+
+async def collect_observation_readiness(
+    market_data_provider,
+    connector_names: Sequence[str],
+    trading_pair: str,
+    total_amount_quote: Decimal,
+    quote_conversion_asset: str,
+    max_age_seconds: float = 120,
+) -> ObservationReport:
+    now = market_data_provider.time()
+    base_asset, quote_asset = trading_pair.split("-")
+    if quote_asset != quote_conversion_asset:
+        return ObservationReport(
+            safe_read_only=False,
+            hypothetical_trade_feasible=False,
+            checked_at=now,
+            reasons=(f"observe mode currently requires quote asset {quote_conversion_asset}, got {quote_asset}",),
+        )
+
+    asset_quote_price = _d(market_data_provider.get_rate(f"{base_asset}-{quote_conversion_asset}"))
+    connectors: Dict[str, object] = {}
+    connector_ready: Dict[str, bool] = {}
+    balances: Dict[str, BalanceSnapshot] = {}
+
+    for name in connector_names:
+        try:
+            connector = market_data_provider.get_connector(name)
+            connectors[name] = connector
+            connector_ready[name] = bool(connector.ready)
+            balances[name] = BalanceSnapshot(
+                exchange=name,
+                base_available=_d(connector.get_available_balance(base_asset)),
+                quote_available=_d(connector.get_available_balance(quote_asset)),
+            )
+        except Exception:
+            connector_ready[name] = False
+
+    permissions: Dict[str, ApiPermissionSnapshot] = {}
+    network_snapshots: Dict[str, NetworkSnapshot] = {}
+
+    async def collect_for(name: str):
+        connector = connectors.get(name)
+        if connector is None:
+            return name, None, None
+        try:
+            permission, networks = await asyncio.gather(
+                fetch_api_permissions(name, connector, now),
+                fetch_network_snapshot(name, connector, base_asset, asset_quote_price, now),
+            )
+            return name, permission, networks
+        except Exception:
+            return name, None, None
+
+    for name, permission, networks in await asyncio.gather(*(collect_for(name) for name in connector_names)):
+        if permission is not None:
+            permissions[name] = permission
+        if networks is not None:
+            network_snapshots[name] = networks
+
+    return assess_observation_readiness(
+        connector_names=connector_names,
+        trading_pair=trading_pair,
+        total_amount_quote=total_amount_quote,
+        asset_quote_price=asset_quote_price,
+        connector_ready=connector_ready,
+        permissions=permissions,
+        network_snapshots=network_snapshots,
+        balances=balances,
+        now=now,
+        max_age_seconds=max_age_seconds,
+    )
 
 
 def assess_live_readiness(
