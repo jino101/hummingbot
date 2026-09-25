@@ -7,6 +7,8 @@ from controllers.generic.arbitrage_controller import ArbitrageController, Arbitr
 from hummingbot.strategy_v2.executors.data_types import ConnectorPair
 from hummingbot.strategy_v2.models.executor_actions import ExecutorAction
 from hummingbot.jino_arbitrage.live_checks import collect_live_readiness, collect_observation_readiness
+from hummingbot.jino_arbitrage.runtime_scanner import scan_provider_pair_for_quote_amount
+from hummingbot.jino_arbitrage.scanner import ScannerPolicy
 
 
 class JinoCrossExchangeArbitrageConfig(ArbitrageControllerConfig):
@@ -37,6 +39,8 @@ class JinoCrossExchangeArbitrageConfig(ArbitrageControllerConfig):
     max_completed_trades_per_day: int = Field(default=100, ge=1)
     paper_test_force_execution: bool = False
     live_readiness_max_age_seconds: int = Field(default=120, ge=10, le=3600)
+    observe_min_net_spread_pct: Decimal = Field(default=Decimal("0"), ge=Decimal("-1"))
+    observe_estimated_slippage_pct: Decimal = Field(default=Decimal("0.001"), ge=Decimal("0"))
 
     @field_validator("exchange_pair_1", "exchange_pair_2")
     @classmethod
@@ -179,6 +183,45 @@ class JinoCrossExchangeArbitrageController(ArbitrageController):
                     ),
                     "checked_at": report.checked_at,
                 }
+
+                network_map = {
+                    snapshot.exchange: list(snapshot.networks)
+                    for snapshot in report.network_snapshots
+                }
+                opportunities = scan_provider_pair_for_quote_amount(
+                    market_data_provider=self.market_data_provider,
+                    connector_names=connector_names,
+                    trading_pair=self.config.exchange_pair_1.trading_pair,
+                    quote_amount=self.config.total_amount_quote,
+                    policy=ScannerPolicy(
+                        min_net_spread_pct=self.config.observe_min_net_spread_pct,
+                        estimated_slippage_pct=self.config.observe_estimated_slippage_pct,
+                        require_rebalance_transferable=True,
+                        max_quote_age_seconds=self.config.live_readiness_max_age_seconds,
+                    ),
+                    networks=network_map,
+                )
+                self.processed_data["observation_opportunities"] = tuple(
+                    {
+                        "trading_pair": item.trading_pair,
+                        "buy_exchange": item.buy_exchange,
+                        "sell_exchange": item.sell_exchange,
+                        "amount_base": str(item.amount_base),
+                        "buy_price": str(item.buy_price),
+                        "sell_price": str(item.sell_price),
+                        "gross_spread_pct": str(item.gross_spread_pct),
+                        "estimated_fee_pct": str(item.estimated_fee_pct),
+                        "estimated_slippage_pct": str(item.estimated_slippage_pct),
+                        "net_spread_pct": str(item.net_spread_pct),
+                        "expected_profit_quote": str(item.expected_profit_quote),
+                        "rebalance_fee_quote": str(item.estimated_rebalance_fee_quote),
+                        "expected_profit_after_rebalance_quote": str(
+                            item.expected_profit_after_rebalance_quote
+                        ),
+                        "common_transfer_networks": tuple(item.common_transfer_networks),
+                    }
+                    for item in opportunities[:10]
+                )
             except Exception as exc:
                 self._last_live_readiness_probe_at = now
                 self.logger().error(f"Jino observation probe failed: {exc}")
@@ -292,6 +335,7 @@ class JinoCrossExchangeArbitrageController(ArbitrageController):
             "paper_test_force_execution": self.config.paper_test_force_execution,
             "live_readiness": self.processed_data.get("live_readiness"),
             "observation_readiness": self.processed_data.get("observation_readiness"),
+            "observation_opportunities": self.processed_data.get("observation_opportunities", ()),
         }
 
     def to_format_status(self) -> List[str]:
@@ -306,6 +350,7 @@ class JinoCrossExchangeArbitrageController(ArbitrageController):
             f"completed={info['completed_trades_today']}/{info['completed_trade_limit']} | "
             f"gate={info['risk_gate']} | "
             f"live_ready={None if info['live_readiness'] is None else info['live_readiness'].get('ready')} | "
-            f"observe_ok={None if info['observation_readiness'] is None else info['observation_readiness'].get('hypothetical_trade_feasible')}"
+            f"observe_ok={None if info['observation_readiness'] is None else info['observation_readiness'].get('hypothetical_trade_feasible')} | "
+            f"observe_opps={len(info['observation_opportunities'])}"
         )
         return lines
