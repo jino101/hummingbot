@@ -14,4 +14,9 @@ if [[ "${CONDA_DEFAULT_ENV:-}" != "hummingbot" ]]; then
   exec conda run --no-capture-output -n hummingbot bash "$0" "$@"
 fi
 
+if [[ -n "${CODESPACE_NAME:-}" && -n "${GITHUB_CODESPACES_PORT_FORWARDING_DOMAIN:-}" ]]; then
+  echo "Codespaces HTTPS URL: https://${CODESPACE_NAME}-${PORT}.${GITHUB_CODESPACES_PORT_FORWARDING_DOMAIN}"
+  echo "Keep the forwarded port PRIVATE unless you intentionally change its visibility."
+fi
+
 PYTHONPATH="$ROOT_DIR" python jino_mobile/server.py --host "$HOST" --port "$PORT"
