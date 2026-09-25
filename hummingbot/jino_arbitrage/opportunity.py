@@ -9,6 +9,8 @@ class NetworkStatus:
     deposit_enabled: Optional[bool]
     withdrawal_enabled: Optional[bool]
     withdrawal_fee_quote: Decimal = Decimal("0")
+    min_confirmations: Optional[int] = None
+    estimated_arrival_minutes: Optional[Decimal] = None
 
 
 @dataclass(frozen=True)
