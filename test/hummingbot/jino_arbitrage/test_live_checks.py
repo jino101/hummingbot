@@ -8,7 +8,9 @@ from hummingbot.jino_arbitrage.live_checks import (
     BalanceSnapshot,
     NetworkSnapshot,
     assess_live_readiness,
+    build_common_transfer_estimates,
     collect_live_readiness,
+    estimate_network_transfer_minutes,
     parse_binance_network_statuses,
     parse_binance_permissions,
     parse_kucoin_network_statuses,
@@ -224,3 +226,51 @@ def test_unknown_permissions_fail_closed():
 
     assert report.ready is False
     assert any("withdrawal permission could not be verified" in reason for reason in report.reasons)
+
+
+def test_transfer_eta_prefers_exchange_estimate():
+    network = __import__("hummingbot.jino_arbitrage.opportunity", fromlist=["NetworkStatus"]).NetworkStatus(
+        "BTC",
+        True,
+        True,
+        Decimal("5"),
+        min_confirmations=2,
+        estimated_arrival_minutes=Decimal("7"),
+    )
+    estimate = estimate_network_transfer_minutes(network)
+    assert estimate.estimated_minutes == Decimal("7")
+    assert estimate.source == "exchange_estimate"
+
+
+def test_transfer_eta_falls_back_to_confirmation_estimate():
+    network = __import__("hummingbot.jino_arbitrage.opportunity", fromlist=["NetworkStatus"]).NetworkStatus(
+        "BTC",
+        True,
+        True,
+        Decimal("5"),
+        min_confirmations=2,
+    )
+    estimate = estimate_network_transfer_minutes(network)
+    assert estimate.estimated_minutes == Decimal("20")
+    assert estimate.source == "confirmation_estimate"
+
+
+def test_common_transfer_eta_uses_slower_exchange_estimate():
+    NetworkStatus = __import__("hummingbot.jino_arbitrage.opportunity", fromlist=["NetworkStatus"]).NetworkStatus
+    snapshots = [
+        NetworkSnapshot(
+            "binance",
+            "BTC",
+            1000,
+            (NetworkStatus("BTC", True, True, Decimal("5"), estimated_arrival_minutes=Decimal("4")),),
+        ),
+        NetworkSnapshot(
+            "kucoin",
+            "BTC",
+            1000,
+            (NetworkStatus("Bitcoin", True, True, Decimal("6"), estimated_arrival_minutes=Decimal("9")),),
+        ),
+    ]
+    estimates = build_common_transfer_estimates(snapshots)
+    assert estimates[0].network == "BITCOIN"
+    assert estimates[0].estimated_minutes == Decimal("9")
