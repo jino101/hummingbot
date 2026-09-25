@@ -41,6 +41,9 @@ class JinoCrossExchangeArbitrageConfig(ArbitrageControllerConfig):
     live_readiness_max_age_seconds: int = Field(default=120, ge=10, le=3600)
     observe_min_net_spread_pct: Decimal = Field(default=Decimal("0"), ge=Decimal("-1"))
     observe_estimated_slippage_pct: Decimal = Field(default=Decimal("0.001"), ge=Decimal("0"))
+    observe_log_path: str = "data/jino_observations.jsonl"
+    observe_latest_path: str = "data/jino_observe_latest.json"
+    runtime_kill_switch_path: str = "data/jino_kill_switch"
 
     @field_validator("exchange_pair_1", "exchange_pair_2")
     @classmethod
@@ -76,26 +79,21 @@ class JinoCrossExchangeArbitrageConfig(ArbitrageControllerConfig):
         if self.safety_mode in {"paper", "observe"}:
             live_connectors = [name for name in connectors if not name.endswith("_paper_trade")]
             if live_connectors:
-                mode_note = (
-                    "paper mode"
-                    if self.safety_mode == "paper"
-                    else "credential-free observe mode"
-                )
+                mode_note = "paper mode" if self.safety_mode == "paper" else "credential-free observe mode"
                 raise ValueError(
                     f"{mode_note} only accepts *_paper_trade connectors, including rate_connector. "
                     f"Live connector(s) supplied: {', '.join(live_connectors)}"
                 )
-            if self.safety_mode == "observe" and self.paper_test_force_execution:
-                raise ValueError("paper_test_force_execution is not allowed in safety_mode=observe")
         else:
-            if self.paper_test_force_execution:
-                raise ValueError("paper_test_force_execution is only allowed in safety_mode=paper")
             paper_connectors = [name for name in connectors if name.endswith("_paper_trade")]
             if paper_connectors:
                 raise ValueError(
-                    "safety_mode=live cannot use *_paper_trade connectors. "
+                    f"safety_mode={self.safety_mode} cannot use *_paper_trade connectors. "
                     f"Paper connector(s) supplied: {', '.join(paper_connectors)}"
                 )
+
+        if self.safety_mode != "paper" and self.paper_test_force_execution:
+            raise ValueError("paper_test_force_execution is only allowed in safety_mode=paper")
         return self
 
 
@@ -131,6 +129,9 @@ class JinoCrossExchangeArbitrageController(ArbitrageController):
         )
 
     def _risk_gate_reason(self) -> str:
+        if Path(self.config.runtime_kill_switch_path).exists():
+            return "runtime kill switch file is present"
+
         if self.config.manual_kill_switch:
             return "manual kill switch is enabled"
 
@@ -154,7 +155,7 @@ class JinoCrossExchangeArbitrageController(ArbitrageController):
         now = self.market_data_provider.time()
         current = (
             self.processed_data.get("observation_readiness")
-            if self.config.safety_mode == "observe"
+            if self.config.safety_mode in {"observe", "readonly"}
             else self.processed_data.get("live_readiness")
         )
         probe_interval = min(30.0, max(10.0, self.config.live_readiness_max_age_seconds / 2))
@@ -166,7 +167,7 @@ class JinoCrossExchangeArbitrageController(ArbitrageController):
             self.config.exchange_pair_2.connector_name,
         ]
 
-        if self.config.safety_mode == "observe":
+        if self.config.safety_mode in {"observe", "readonly"}:
             try:
                 report = await collect_observation_readiness(
                     market_data_provider=self.market_data_provider,
@@ -237,6 +238,7 @@ class JinoCrossExchangeArbitrageController(ArbitrageController):
                     }
                     for item in opportunities[:10]
                 )
+            self._persist_observation()
             except Exception as exc:
                 self._last_live_readiness_probe_at = now
                 self.logger().error(f"Jino observation probe failed: {exc}")
@@ -253,6 +255,7 @@ class JinoCrossExchangeArbitrageController(ArbitrageController):
                 }
                 self.processed_data["observation_opportunities"] = ()
             self.processed_data["live_readiness"] = None
+            self._persist_observation()
             return
         if self.config.exchange_pair_1.trading_pair != self.config.exchange_pair_2.trading_pair:
             self.processed_data["live_readiness"] = {
@@ -287,6 +290,30 @@ class JinoCrossExchangeArbitrageController(ArbitrageController):
                 "common_rebalance_networks": (),
             }
 
+    def _persist_observation(self) -> None:
+        readiness = self.processed_data.get("observation_readiness") or {}
+        snapshot = {
+            "timestamp": self.market_data_provider.time(),
+            "mode": self.config.safety_mode,
+            "trading_pair": self.config.exchange_pair_1.trading_pair,
+            "exchange_1": self.config.exchange_pair_1.connector_name,
+            "exchange_2": self.config.exchange_pair_2.connector_name,
+            "quote_amount": str(self.config.total_amount_quote),
+            "readiness": readiness,
+            "opportunities": list(self.processed_data.get("observation_opportunities") or ()),
+            "executors": 0,
+            "positions": 0,
+            "runtime_kill_switch": Path(self.config.runtime_kill_switch_path).exists(),
+        }
+        try:
+            persist_observation_snapshot(
+                self.config.observe_log_path,
+                self.config.observe_latest_path,
+                snapshot,
+            )
+        except Exception as exc:
+            self.logger().warning(f"Jino observation persistence failed: {exc}")
+
     def _live_readiness_gate_reason(self) -> str:
         if self.config.safety_mode != "live":
             return ""
@@ -299,8 +326,8 @@ class JinoCrossExchangeArbitrageController(ArbitrageController):
         return ""
 
     def determine_executor_actions(self) -> List[ExecutorAction]:
-        if self.config.safety_mode == "observe":
-            # Hard no-trade mode: market data, balances, networks and transfer ETAs only.
+        if self.config.safety_mode in {"observe", "readonly"}:
+            # Hard no-trade modes: analysis is allowed, executor/order creation is not.
             return []
 
         live_reason = self._live_readiness_gate_reason()
