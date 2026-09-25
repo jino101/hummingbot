@@ -251,9 +251,9 @@ def test_observe_mode_never_creates_executor():
     config = JinoCrossExchangeArbitrageConfig(
         id="observe-test",
         safety_mode="observe",
-        exchange_pair_1=ConnectorPair(connector_name="binance", trading_pair="BTC-USDT"),
-        exchange_pair_2=ConnectorPair(connector_name="kucoin", trading_pair="BTC-USDT"),
-        rate_connector="binance",
+        exchange_pair_1=ConnectorPair(connector_name="binance_paper_trade", trading_pair="BTC-USDT"),
+        exchange_pair_2=ConnectorPair(connector_name="kucoin_paper_trade", trading_pair="BTC-USDT"),
+        rate_connector="binance_paper_trade",
         total_amount_quote=Decimal("25"),
         max_trade_amount_quote=Decimal("25"),
     )
@@ -267,3 +267,23 @@ def test_observe_mode_never_creates_executor():
     }
 
     assert controller.determine_executor_actions() == []
+
+
+def test_observe_mode_rejects_live_connectors_without_credentials():
+    with pytest.raises(ValueError):
+        JinoCrossExchangeArbitrageConfig(
+            id="observe-live-test",
+            safety_mode="observe",
+            exchange_pair_1=ConnectorPair(connector_name="binance", trading_pair="BTC-USDT"),
+            exchange_pair_2=ConnectorPair(connector_name="kucoin", trading_pair="BTC-USDT"),
+            rate_connector="binance",
+        )
+
+
+def test_observe_mode_disallows_forced_execution():
+    with pytest.raises(ValueError):
+        JinoCrossExchangeArbitrageConfig(
+            id="observe-force-test",
+            safety_mode="observe",
+            paper_test_force_execution=True,
+        )
