@@ -1,4 +1,10 @@
 const $ = (id) => document.getElementById(id);
+let accessToken = sessionStorage.getItem("jinoToken") || "";
+const apiFetch = (path, options={}) => fetch(path, {
+  ...options,
+  cache: "no-store",
+  headers: {...(options.headers || {}), Authorization: `Bearer ${accessToken}`}
+});
 const fmt = (v, n=4) => {
   const x = Number(v);
   return Number.isFinite(x) ? x.toFixed(n) : "–";
@@ -43,9 +49,9 @@ function renderHistory(records) {
 async function refresh() {
   try {
     const [statusRes, summaryRes, historyRes] = await Promise.all([
-      fetch("/api/status", {cache:"no-store"}),
-      fetch("/api/summary", {cache:"no-store"}),
-      fetch("/api/history", {cache:"no-store"}),
+      apiFetch("/api/status"),
+      apiFetch("/api/summary"),
+      apiFetch("/api/history"),
     ]);
     const status = await statusRes.json();
     const summary = await summaryRes.json();
@@ -77,10 +83,32 @@ async function refresh() {
 
 $("killButton").addEventListener("click", async () => {
   if (!confirm("Kill-Switch wirklich aktivieren? Neue Trades werden blockiert.")) return;
-  await fetch("/api/kill-switch/enable", {method:"POST"});
+  await apiFetch("/api/kill-switch/enable", {method:"POST"});
   refresh();
 });
 
+async function login(token) {
+  accessToken = (token || "").trim();
+  if (!accessToken) return;
+  try {
+    const response = await apiFetch("/api/status");
+    if (!response.ok) throw new Error("auth");
+    sessionStorage.setItem("jinoToken", accessToken);
+    $("authCard").hidden = true;
+    $("dashboard").hidden = false;
+    $("authError").textContent = "";
+    await refresh();
+  } catch (e) {
+    $("authError").textContent = "Token nicht akzeptiert.";
+    $("dashboard").hidden = true;
+  }
+}
+
+$("loginButton").addEventListener("click", () => login($("tokenInput").value));
+$("tokenInput").addEventListener("keydown", e => {
+  if (e.key === "Enter") login($("tokenInput").value);
+});
+
 if ("serviceWorker" in navigator) navigator.serviceWorker.register("/sw.js").catch(()=>{});
-refresh();
-setInterval(refresh, 5000);
+if (accessToken) login(accessToken);
+setInterval(() => { if (accessToken) refresh(); }, 5000);
