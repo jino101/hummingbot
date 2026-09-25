@@ -245,3 +245,25 @@ def test_live_mode_blocks_on_failed_readiness_reason():
     }
     assert controller.determine_executor_actions() == []
     assert "withdrawal permission" in controller._live_readiness_gate_reason()
+
+
+def test_observe_mode_never_creates_executor():
+    config = JinoCrossExchangeArbitrageConfig(
+        id="observe-test",
+        safety_mode="observe",
+        exchange_pair_1=ConnectorPair(connector_name="binance", trading_pair="BTC-USDT"),
+        exchange_pair_2=ConnectorPair(connector_name="kucoin", trading_pair="BTC-USDT"),
+        rate_connector="binance",
+        total_amount_quote=Decimal("25"),
+        max_trade_amount_quote=Decimal("25"),
+    )
+    controller = make_controller(config)
+    controller.processed_data["observation_readiness"] = {
+        "safe_read_only": True,
+        "hypothetical_trade_feasible": True,
+        "reasons": (),
+        "common_rebalance_networks": ("BITCOIN",),
+        "transfer_estimates": (),
+    }
+
+    assert controller.determine_executor_actions() == []
