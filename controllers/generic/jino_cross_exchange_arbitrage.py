@@ -6,7 +6,7 @@ from pydantic import Field, field_validator, model_validator
 from controllers.generic.arbitrage_controller import ArbitrageController, ArbitrageControllerConfig
 from hummingbot.strategy_v2.executors.data_types import ConnectorPair
 from hummingbot.strategy_v2.models.executor_actions import ExecutorAction
-from hummingbot.jino_arbitrage.live_checks import collect_live_readiness
+from hummingbot.jino_arbitrage.live_checks import collect_live_readiness, collect_observation_readiness
 
 
 class JinoCrossExchangeArbitrageConfig(ArbitrageControllerConfig):
@@ -31,7 +31,7 @@ class JinoCrossExchangeArbitrageConfig(ArbitrageControllerConfig):
     rate_connector: str = "binance_paper_trade"
     quote_conversion_asset: str = "USDT"
 
-    safety_mode: Literal["paper", "live"] = "paper"
+    safety_mode: Literal["paper", "observe", "live"] = "paper"
     max_trade_amount_quote: Decimal = Field(default=Decimal("100"), gt=Decimal("0"))
     max_daily_loss_quote: Decimal = Field(default=Decimal("25"), ge=Decimal("0"))
     max_completed_trades_per_day: int = Field(default=100, ge=1)
@@ -82,7 +82,7 @@ class JinoCrossExchangeArbitrageConfig(ArbitrageControllerConfig):
             paper_connectors = [name for name in connectors if name.endswith("_paper_trade")]
             if paper_connectors:
                 raise ValueError(
-                    "safety_mode=live cannot use *_paper_trade connectors. "
+                    f"safety_mode={self.safety_mode} cannot use *_paper_trade connectors. "
                     f"Paper connector(s) supplied: {', '.join(paper_connectors)}"
                 )
         return self
@@ -135,8 +135,9 @@ class JinoCrossExchangeArbitrageController(ArbitrageController):
         return ""
 
     async def update_processed_data(self):
-        if self.config.safety_mode != "live":
+        if self.config.safety_mode == "paper":
             self.processed_data["live_readiness"] = None
+            self.processed_data["observation_readiness"] = None
             return
 
         now = self.market_data_provider.time()
@@ -149,6 +150,47 @@ class JinoCrossExchangeArbitrageController(ArbitrageController):
             self.config.exchange_pair_1.connector_name,
             self.config.exchange_pair_2.connector_name,
         ]
+
+        if self.config.safety_mode == "observe":
+            try:
+                report = await collect_observation_readiness(
+                    market_data_provider=self.market_data_provider,
+                    connector_names=connector_names,
+                    trading_pair=self.config.exchange_pair_1.trading_pair,
+                    total_amount_quote=self.config.total_amount_quote,
+                    quote_conversion_asset=self.config.quote_conversion_asset,
+                    max_age_seconds=self.config.live_readiness_max_age_seconds,
+                )
+                self._last_live_readiness_probe_at = now
+                self.processed_data["observation_readiness"] = {
+                    "safe_read_only": report.safe_read_only,
+                    "hypothetical_trade_feasible": report.hypothetical_trade_feasible,
+                    "reasons": report.reasons,
+                    "common_rebalance_networks": report.common_rebalance_networks,
+                    "transfer_estimates": tuple(
+                        {
+                            "network": item.network,
+                            "estimated_minutes": (
+                                None if item.estimated_minutes is None else str(item.estimated_minutes)
+                            ),
+                            "source": item.source,
+                        }
+                        for item in report.transfer_estimates
+                    ),
+                    "checked_at": report.checked_at,
+                }
+            except Exception as exc:
+                self._last_live_readiness_probe_at = now
+                self.logger().error(f"Jino observation probe failed: {exc}")
+                self.processed_data["observation_readiness"] = {
+                    "safe_read_only": False,
+                    "hypothetical_trade_feasible": False,
+                    "reasons": (f"observation probe failed: {exc}",),
+                    "common_rebalance_networks": (),
+                    "transfer_estimates": (),
+                }
+            self.processed_data["live_readiness"] = None
+            return
         if self.config.exchange_pair_1.trading_pair != self.config.exchange_pair_2.trading_pair:
             self.processed_data["live_readiness"] = {
                 "ready": False,
@@ -194,6 +236,10 @@ class JinoCrossExchangeArbitrageController(ArbitrageController):
         return ""
 
     def determine_executor_actions(self) -> List[ExecutorAction]:
+        if self.config.safety_mode == "observe":
+            # Hard no-trade mode: market data, balances, networks and transfer ETAs only.
+            return []
+
         live_reason = self._live_readiness_gate_reason()
         if live_reason:
             self.logger().warning(f"Jino arbitrage live gate: {live_reason}. No executor will be created.")
@@ -245,6 +291,7 @@ class JinoCrossExchangeArbitrageController(ArbitrageController):
             "risk_gate": self._risk_gate_reason() or "clear",
             "paper_test_force_execution": self.config.paper_test_force_execution,
             "live_readiness": self.processed_data.get("live_readiness"),
+            "observation_readiness": self.processed_data.get("observation_readiness"),
         }
 
     def to_format_status(self) -> List[str]:
@@ -258,6 +305,7 @@ class JinoCrossExchangeArbitrageController(ArbitrageController):
             f"daily_pnl={info['daily_realized_pnl_quote']} {self.config.quote_conversion_asset} | "
             f"completed={info['completed_trades_today']}/{info['completed_trade_limit']} | "
             f"gate={info['risk_gate']} | "
-            f"live_ready={None if info['live_readiness'] is None else info['live_readiness'].get('ready')}"
+            f"live_ready={None if info['live_readiness'] is None else info['live_readiness'].get('ready')} | "
+            f"observe_ok={None if info['observation_readiness'] is None else info['observation_readiness'].get('hypothetical_trade_feasible')}"
         )
         return lines
