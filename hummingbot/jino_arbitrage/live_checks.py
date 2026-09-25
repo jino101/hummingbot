@@ -88,6 +88,10 @@ class NetworkTransferEstimate:
 @dataclass(frozen=True)
 class ObservationReport:
     safe_read_only: bool
+    credential_free: bool
+    market_data_ready: bool
+    account_data_verified: bool
+    transfer_route_verified: bool
     hypothetical_trade_feasible: bool
     checked_at: float
     reasons: Tuple[str, ...]
@@ -385,74 +389,103 @@ def assess_observation_readiness(
     balances: Mapping[str, BalanceSnapshot],
     now: float,
     max_age_seconds: float = 120,
+    credential_free: bool = False,
 ) -> ObservationReport:
     reasons = []
     base_asset, quote_asset = trading_pair.split("-")
-    safe_read_only = True
-    hypothetical_trade_feasible = True
 
-    for name in connector_names:
-        if connector_ready.get(name) is not True:
-            reasons.append(f"{name}: connector is not ready")
-            hypothetical_trade_feasible = False
+    market_data_ready = all(connector_ready.get(name) is True for name in connector_names)
+    if not market_data_ready:
+        for name in connector_names:
+            if connector_ready.get(name) is not True:
+                reasons.append(f"{name}: public market-data connector is not ready")
 
-        permission = permissions.get(name)
-        if permission is None or not permission.is_fresh(now, max_age_seconds):
-            reasons.append(f"{name}: API read-only permission status unavailable or stale")
-            safe_read_only = False
-        else:
-            if permission.can_read is not True:
-                reasons.append(f"{name}: API read permission could not be verified")
+    account_data_verified = not credential_free
+    transfer_route_verified = False
+    safe_read_only = credential_free
+
+    if credential_free:
+        reasons.append(
+            "credential-free observe mode: account balances/API permissions are intentionally not queried"
+        )
+        reasons.append(
+            f"{base_asset} deposit/withdraw availability and exact withdrawal fees are not authenticated in this mode"
+        )
+    else:
+        safe_read_only = True
+        for name in connector_names:
+            permission = permissions.get(name)
+            if permission is None or not permission.is_fresh(now, max_age_seconds):
+                reasons.append(f"{name}: API read-only permission status unavailable or stale")
                 safe_read_only = False
-            if permission.can_spot_trade is True:
-                reasons.append(f"{name}: spot-trading permission is enabled; observe mode expects read-only keys")
-                safe_read_only = False
-            if permission.can_withdraw is True:
-                reasons.append(f"{name}: withdrawal permission is enabled; observe mode requires it disabled")
-                safe_read_only = False
-            if permission.can_spot_trade is None or permission.can_withdraw is None:
-                reasons.append(f"{name}: API permissions could not be proven read-only")
-                safe_read_only = False
+                account_data_verified = False
+            else:
+                if permission.can_read is not True:
+                    reasons.append(f"{name}: API read permission could not be verified")
+                    safe_read_only = False
+                    account_data_verified = False
+                if permission.can_spot_trade is True:
+                    reasons.append(f"{name}: spot-trading permission is enabled; observe mode expects read-only keys")
+                    safe_read_only = False
+                if permission.can_withdraw is True:
+                    reasons.append(f"{name}: withdrawal permission is enabled; observe mode requires it disabled")
+                    safe_read_only = False
+                if permission.can_spot_trade is None or permission.can_withdraw is None:
+                    reasons.append(f"{name}: API permissions could not be proven read-only")
+                    safe_read_only = False
+                    account_data_verified = False
 
-        network_snapshot = network_snapshots.get(name)
-        if (
-            network_snapshot is None
-            or not network_snapshot.is_fresh(now, max_age_seconds)
-            or not network_snapshot.networks
-        ):
-            reasons.append(f"{name}: {base_asset} network status unavailable or stale")
-            hypothetical_trade_feasible = False
+            balance = balances.get(name)
+            if balance is None:
+                reasons.append(f"{name}: balance status unavailable")
+                account_data_verified = False
+            else:
+                if balance.quote_available < total_amount_quote:
+                    reasons.append(f"{name}: insufficient {quote_asset} for hypothetical buy side")
+                    account_data_verified = False
+                if asset_quote_price <= 0 or balance.base_available * asset_quote_price < total_amount_quote:
+                    reasons.append(f"{name}: insufficient {base_asset} for hypothetical sell side")
+                    account_data_verified = False
 
-        balance = balances.get(name)
-        if balance is None:
-            reasons.append(f"{name}: balance status unavailable")
-            hypothetical_trade_feasible = False
-        else:
-            if balance.quote_available < total_amount_quote:
-                reasons.append(f"{name}: insufficient {quote_asset} for hypothetical buy side")
-                hypothetical_trade_feasible = False
-            if asset_quote_price <= 0 or balance.base_available * asset_quote_price < total_amount_quote:
-                reasons.append(f"{name}: insufficient {base_asset} for hypothetical sell side")
-                hypothetical_trade_feasible = False
+        snapshots = [
+            network_snapshots[name]
+            for name in connector_names
+            if name in network_snapshots and network_snapshots[name].is_fresh(now, max_age_seconds)
+        ]
+        common = common_bidirectional_rebalance_networks(snapshots) if len(snapshots) == len(connector_names) else ()
+        transfer_route_verified = bool(common)
+        if not common:
+            reasons.append(f"no verified common bidirectional {base_asset} transfer network")
 
-    snapshots = [
-        network_snapshots[name]
-        for name in connector_names
-        if name in network_snapshots and network_snapshots[name].is_fresh(now, max_age_seconds)
-    ]
-    common = common_bidirectional_rebalance_networks(snapshots) if len(snapshots) == len(connector_names) else ()
-    if not common:
-        reasons.append(f"no common bidirectional {base_asset} transfer network")
-        hypothetical_trade_feasible = False
+        return ObservationReport(
+            safe_read_only=safe_read_only,
+            credential_free=False,
+            market_data_ready=market_data_ready,
+            account_data_verified=account_data_verified,
+            transfer_route_verified=transfer_route_verified,
+            hypothetical_trade_feasible=(
+                market_data_ready and account_data_verified and transfer_route_verified
+            ),
+            checked_at=now,
+            reasons=tuple(dict.fromkeys(reasons)),
+            common_rebalance_networks=common,
+            transfer_estimates=build_common_transfer_estimates(snapshots),
+            network_snapshots=tuple(snapshots),
+        )
 
+    # Credential-free mode deliberately limits itself to public market data.
     return ObservationReport(
-        safe_read_only=safe_read_only,
-        hypothetical_trade_feasible=hypothetical_trade_feasible,
+        safe_read_only=True,
+        credential_free=True,
+        market_data_ready=market_data_ready,
+        account_data_verified=False,
+        transfer_route_verified=False,
+        hypothetical_trade_feasible=market_data_ready,
         checked_at=now,
         reasons=tuple(dict.fromkeys(reasons)),
-        common_rebalance_networks=common,
-        transfer_estimates=build_common_transfer_estimates(snapshots),
-        network_snapshots=tuple(snapshots),
+        common_rebalance_networks=(),
+        transfer_estimates=(),
+        network_snapshots=(),
     )
 
 
@@ -469,11 +502,16 @@ async def collect_observation_readiness(
     if quote_asset != quote_conversion_asset:
         return ObservationReport(
             safe_read_only=False,
+            credential_free=all(name.endswith("_paper_trade") for name in connector_names),
+            market_data_ready=False,
+            account_data_verified=False,
+            transfer_route_verified=False,
             hypothetical_trade_feasible=False,
             checked_at=now,
             reasons=(f"observe mode currently requires quote asset {quote_conversion_asset}, got {quote_asset}",),
         )
 
+    credential_free = all(name.endswith("_paper_trade") for name in connector_names)
     asset_quote_price = _d(market_data_provider.get_rate(f"{base_asset}-{quote_conversion_asset}"))
     connectors: Dict[str, object] = {}
     connector_ready: Dict[str, bool] = {}
@@ -484,35 +522,37 @@ async def collect_observation_readiness(
             connector = market_data_provider.get_connector(name)
             connectors[name] = connector
             connector_ready[name] = bool(connector.ready)
-            balances[name] = BalanceSnapshot(
-                exchange=name,
-                base_available=_d(connector.get_available_balance(base_asset)),
-                quote_available=_d(connector.get_available_balance(quote_asset)),
-            )
+            if not credential_free:
+                balances[name] = BalanceSnapshot(
+                    exchange=name,
+                    base_available=_d(connector.get_available_balance(base_asset)),
+                    quote_available=_d(connector.get_available_balance(quote_asset)),
+                )
         except Exception:
             connector_ready[name] = False
 
     permissions: Dict[str, ApiPermissionSnapshot] = {}
     network_snapshots: Dict[str, NetworkSnapshot] = {}
 
-    async def collect_for(name: str):
-        connector = connectors.get(name)
-        if connector is None:
-            return name, None, None
-        try:
-            permission, networks = await asyncio.gather(
-                fetch_api_permissions(name, connector, now),
-                fetch_network_snapshot(name, connector, base_asset, asset_quote_price, now),
-            )
-            return name, permission, networks
-        except Exception:
-            return name, None, None
+    if not credential_free:
+        async def collect_for(name: str):
+            connector = connectors.get(name)
+            if connector is None:
+                return name, None, None
+            try:
+                permission, networks = await asyncio.gather(
+                    fetch_api_permissions(name, connector, now),
+                    fetch_network_snapshot(name, connector, base_asset, asset_quote_price, now),
+                )
+                return name, permission, networks
+            except Exception:
+                return name, None, None
 
-    for name, permission, networks in await asyncio.gather(*(collect_for(name) for name in connector_names)):
-        if permission is not None:
-            permissions[name] = permission
-        if networks is not None:
-            network_snapshots[name] = networks
+        for name, permission, networks in await asyncio.gather(*(collect_for(name) for name in connector_names)):
+            if permission is not None:
+                permissions[name] = permission
+            if networks is not None:
+                network_snapshots[name] = networks
 
     return assess_observation_readiness(
         connector_names=connector_names,
@@ -525,6 +565,7 @@ async def collect_observation_readiness(
         balances=balances,
         now=now,
         max_age_seconds=max_age_seconds,
+        credential_free=credential_free,
     )
 
 
