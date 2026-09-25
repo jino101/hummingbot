@@ -9,6 +9,7 @@ import argparse
 import json
 import mimetypes
 import os
+import secrets
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -27,6 +28,19 @@ class JinoDashboardHandler(BaseHTTPRequestHandler):
     @property
     def root(self) -> Path:
         return Path(self.server.web_root)
+
+    def _authorized(self) -> bool:
+        expected = getattr(self.server, "access_token", "")
+        if not expected:
+            return False
+        supplied = self.headers.get("Authorization", "")
+        return supplied == f"Bearer {expected}"
+
+    def _require_auth(self) -> bool:
+        if self._authorized():
+            return True
+        self._send_json({"error": "unauthorized"}, status=HTTPStatus.UNAUTHORIZED)
+        return False
 
     def _send_json(self, payload, status=HTTPStatus.OK):
         body = json.dumps(payload, separators=(",", ":")).encode("utf-8")
@@ -70,6 +84,8 @@ class JinoDashboardHandler(BaseHTTPRequestHandler):
             return
 
         if route == "/api/status":
+            if not self._require_auth():
+                return
             latest = read_latest_observation(self.server.latest_path)
             latest = dict(latest)
             latest["runtime_kill_switch"] = Path(self.server.kill_switch_path).exists()
@@ -77,11 +93,15 @@ class JinoDashboardHandler(BaseHTTPRequestHandler):
             return
 
         if route == "/api/history":
+            if not self._require_auth():
+                return
             rows = read_observation_history(self.server.log_path, limit=250)
             self._send_json({"records": rows})
             return
 
         if route == "/api/summary":
+            if not self._require_auth():
+                return
             rows = read_observation_history(self.server.log_path, limit=5000)
             self._send_json(summarize_observations(rows))
             return
@@ -106,6 +126,8 @@ class JinoDashboardHandler(BaseHTTPRequestHandler):
 
     def do_POST(self):
         route = urlparse(self.path).path
+        if not self._require_auth():
+            return
         if route != "/api/kill-switch/enable":
             self._send_json(
                 {"error": "unsupported action; dashboard cannot enable trading or disable safety controls"},
@@ -123,12 +145,13 @@ class JinoDashboardHandler(BaseHTTPRequestHandler):
             super().log_message(fmt, *args)
 
 
-def make_server(host, port, web_root, latest_path, log_path, kill_switch_path, quiet=False):
+def make_server(host, port, web_root, latest_path, log_path, kill_switch_path, access_token, quiet=False):
     server = ThreadingHTTPServer((host, port), JinoDashboardHandler)
     server.web_root = str(web_root)
     server.latest_path = str(latest_path)
     server.log_path = str(log_path)
     server.kill_switch_path = str(kill_switch_path)
+    server.access_token = access_token
     server.quiet = quiet
     return server
 
@@ -143,10 +166,12 @@ def main():
     parser.add_argument("--kill-switch", default="data/jino_kill_switch")
     args = parser.parse_args()
 
+    access_token = os.environ.get("JINO_DASHBOARD_TOKEN") or secrets.token_urlsafe(24)
     server = make_server(
-        args.host, args.port, args.web_root, args.latest, args.log, args.kill_switch
+        args.host, args.port, args.web_root, args.latest, args.log, args.kill_switch, access_token
     )
     print(f"Jino dashboard: http://{args.host}:{args.port}")
+    print(f"JINO DASHBOARD TOKEN: {access_token}")
     print("Read-only dashboard. Only safety action available: ENGAGE KILL SWITCH.")
     try:
         server.serve_forever()
