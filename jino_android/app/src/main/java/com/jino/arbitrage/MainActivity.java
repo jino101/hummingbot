@@ -89,6 +89,29 @@ public class MainActivity extends Activity {
     }
 
     private void showDashboard(String url) {
+        LinearLayout root = new LinearLayout(this);
+        root.setOrientation(LinearLayout.VERTICAL);
+        root.setBackgroundColor(Color.rgb(7, 11, 20));
+
+        LinearLayout toolbar = new LinearLayout(this);
+        toolbar.setOrientation(LinearLayout.HORIZONTAL);
+        toolbar.setGravity(Gravity.CENTER_VERTICAL);
+        toolbar.setPadding(24, 12, 12, 12);
+        toolbar.setBackgroundColor(Color.rgb(11, 16, 32));
+
+        TextView title = new TextView(this);
+        title.setText("JINO");
+        title.setTextColor(Color.WHITE);
+        title.setTextSize(19);
+        title.setGravity(Gravity.CENTER_VERTICAL);
+
+        Button serverButton = new Button(this);
+        serverButton.setText("SERVER");
+        serverButton.setOnClickListener(v -> showSetup());
+
+        toolbar.addView(title, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+        toolbar.addView(serverButton, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+
         WebView web = new WebView(this);
         web.setBackgroundColor(Color.rgb(7, 11, 20));
         WebSettings settings = web.getSettings();
@@ -99,6 +122,9 @@ public class MainActivity extends Activity {
         settings.setMixedContentMode(WebSettings.MIXED_CONTENT_NEVER_ALLOW);
         web.setWebViewClient(new WebViewClient());
         web.loadUrl(url);
-        setContentView(web);
+
+        root.addView(toolbar, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+        root.addView(web, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f));
+        setContentView(root);
     }
 }
