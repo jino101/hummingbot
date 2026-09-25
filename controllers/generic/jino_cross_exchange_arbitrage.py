@@ -41,6 +41,9 @@ class JinoCrossExchangeArbitrageConfig(ArbitrageControllerConfig):
     live_readiness_max_age_seconds: int = Field(default=120, ge=10, le=3600)
     observe_min_net_spread_pct: Decimal = Field(default=Decimal("0"), ge=Decimal("-1"))
     observe_estimated_slippage_pct: Decimal = Field(default=Decimal("0.001"), ge=Decimal("0"))
+    observe_pairs: List[str] = Field(
+        default_factory=lambda: ["BTC-USDT", "ETH-USDT", "SOL-USDT", "XRP-USDT", "DOGE-USDT"]
+    )
     observe_log_path: str = "data/jino_observations.jsonl"
     observe_latest_path: str = "data/jino_observe_latest.json"
     runtime_kill_switch_path: str = "data/jino_kill_switch"
@@ -51,6 +54,26 @@ class JinoCrossExchangeArbitrageConfig(ArbitrageControllerConfig):
         if "-" not in value.trading_pair:
             raise ValueError("trading_pair must use Hummingbot BASE-QUOTE format, e.g. BTC-USDT")
         return value
+
+    @field_validator("observe_pairs")
+    @classmethod
+    def validate_observe_pairs(cls, value: List[str]) -> List[str]:
+        normalized = []
+        for pair in value:
+            pair = str(pair).strip().upper()
+            if "-" not in pair:
+                raise ValueError("observe_pairs must use BASE-QUOTE format")
+            if pair not in normalized:
+                normalized.append(pair)
+        return normalized
+
+    def update_markets(self, markets):
+        markets = super().update_markets(markets)
+        if self.safety_mode in {"observe", "readonly"}:
+            for pair in self.observe_pairs:
+                markets.add_or_update(self.exchange_pair_1.connector_name, pair)
+                markets.add_or_update(self.exchange_pair_2.connector_name, pair)
+        return markets
 
     @model_validator(mode="after")
     def validate_safety_limits(self):
@@ -204,19 +227,33 @@ class JinoCrossExchangeArbitrageController(ArbitrageController):
                     snapshot.exchange: list(snapshot.networks)
                     for snapshot in report.network_snapshots
                 }
-                opportunities = scan_provider_pair_for_quote_amount(
-                    market_data_provider=self.market_data_provider,
-                    connector_names=connector_names,
-                    trading_pair=self.config.exchange_pair_1.trading_pair,
-                    quote_amount=self.config.total_amount_quote,
-                    policy=ScannerPolicy(
-                        min_net_spread_pct=self.config.observe_min_net_spread_pct,
-                        estimated_slippage_pct=self.config.observe_estimated_slippage_pct,
-                        require_rebalance_transferable=not report.credential_free,
-                        max_quote_age_seconds=self.config.live_readiness_max_age_seconds,
-                    ),
-                    networks=network_map,
+                pairs_to_scan = (
+                    self.config.observe_pairs
+                    if self.config.safety_mode == "observe"
+                    else [self.config.exchange_pair_1.trading_pair]
                 )
+                opportunities = []
+                for pair in pairs_to_scan:
+                    opportunities.extend(
+                        scan_provider_pair_for_quote_amount(
+                            market_data_provider=self.market_data_provider,
+                            connector_names=connector_names,
+                            trading_pair=pair,
+                            quote_amount=self.config.total_amount_quote,
+                            policy=ScannerPolicy(
+                                min_net_spread_pct=self.config.observe_min_net_spread_pct,
+                                estimated_slippage_pct=self.config.observe_estimated_slippage_pct,
+                                require_rebalance_transferable=not report.credential_free,
+                                max_quote_age_seconds=self.config.live_readiness_max_age_seconds,
+                            ),
+                            networks=network_map if pair == self.config.exchange_pair_1.trading_pair else {},
+                        )
+                    )
+                opportunities.sort(
+                    key=lambda item: item.expected_profit_after_rebalance_quote,
+                    reverse=True,
+                )
+                self.processed_data["observation_pair_count"] = len(pairs_to_scan)
                 self.processed_data["observation_opportunities"] = tuple(
                     {
                         "trading_pair": item.trading_pair,
@@ -252,6 +289,7 @@ class JinoCrossExchangeArbitrageController(ArbitrageController):
                     "common_rebalance_networks": (),
                     "transfer_estimates": (),
                 }
+                self.processed_data["observation_pair_count"] = 0
                 self.processed_data["observation_opportunities"] = ()
             self.processed_data["live_readiness"] = None
             self._persist_observation()
@@ -299,6 +337,7 @@ class JinoCrossExchangeArbitrageController(ArbitrageController):
             "exchange_2": self.config.exchange_pair_2.connector_name,
             "quote_amount": str(self.config.total_amount_quote),
             "readiness": readiness,
+            "pairs_scanned": self.processed_data.get("observation_pair_count", 0),
             "opportunities": list(self.processed_data.get("observation_opportunities") or ()),
             "executors": 0,
             "positions": 0,
@@ -398,6 +437,7 @@ class JinoCrossExchangeArbitrageController(ArbitrageController):
             f"live_ready={None if info['live_readiness'] is None else info['live_readiness'].get('ready')} | "
             f"market_ready={None if info['observation_readiness'] is None else info['observation_readiness'].get('market_data_ready')} | "
             f"transfer_verified={None if info['observation_readiness'] is None else info['observation_readiness'].get('transfer_route_verified')} | "
+            f"observe_pairs={info['observation_pair_count']} | "
             f"observe_opps={len(info['observation_opportunities'])}"
         )
 
