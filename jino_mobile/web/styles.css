@@ -16,3 +16,5 @@ h1{margin:0;font-size:34px;letter-spacing:.18em}header p{margin:4px 0 0;color:#8
 .hist{padding:10px 0;border-bottom:1px solid #27314a;font-size:13px}.hist:last-child{border:0}
 footer{text-align:center;color:#69768c;font-size:12px;margin-top:18px}
 @media(min-width:700px){.grid{grid-template-columns:2fr 1fr 1fr 1fr}.hero{grid-column:span 1}}
+
+.token-input{width:100%;padding:13px 14px;margin:8px 0 12px;border-radius:12px;border:1px solid #35415d;background:#0a1020;color:#fff;font-size:16px}#loginButton{width:100%;padding:13px;border:0;border-radius:12px;font-weight:800;background:#627eea;color:#fff}code{color:#b9c6ff}
