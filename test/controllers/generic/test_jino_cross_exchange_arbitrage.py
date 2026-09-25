@@ -287,3 +287,44 @@ def test_observe_mode_disallows_forced_execution():
             safety_mode="observe",
             paper_test_force_execution=True,
         )
+
+
+def test_readonly_mode_never_creates_executor():
+    config = JinoCrossExchangeArbitrageConfig(
+        id="readonly-test",
+        safety_mode="readonly",
+        exchange_pair_1=ConnectorPair(connector_name="binance", trading_pair="BTC-USDT"),
+        exchange_pair_2=ConnectorPair(connector_name="kucoin", trading_pair="BTC-USDT"),
+        rate_connector="binance",
+        total_amount_quote=Decimal("25"),
+        max_trade_amount_quote=Decimal("25"),
+    )
+    controller = make_controller(config)
+    controller.processed_data["observation_readiness"] = {
+        "safe_read_only": True,
+        "market_data_ready": True,
+    }
+    assert controller.determine_executor_actions() == []
+
+
+def test_runtime_kill_switch_file_blocks_new_actions(tmp_path):
+    kill = tmp_path / "jino_kill"
+    kill.write_text("engaged\n", encoding="utf-8")
+    config = JinoCrossExchangeArbitrageConfig(
+        id="kill-file-test",
+        runtime_kill_switch_path=str(kill),
+    )
+    controller = make_controller(config)
+    assert controller.determine_executor_actions() == []
+    assert "runtime kill switch" in controller._risk_gate_reason()
+
+
+def test_readonly_mode_rejects_paper_connectors():
+    with pytest.raises(ValueError):
+        JinoCrossExchangeArbitrageConfig(
+            id="readonly-paper-test",
+            safety_mode="readonly",
+            exchange_pair_1=ConnectorPair(connector_name="binance_paper_trade", trading_pair="BTC-USDT"),
+            exchange_pair_2=ConnectorPair(connector_name="kucoin_paper_trade", trading_pair="BTC-USDT"),
+            rate_connector="binance_paper_trade",
+        )
