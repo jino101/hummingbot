@@ -444,7 +444,7 @@ class JinoCrossExchangeArbitrageController(ArbitrageController):
             f"observe_opps={len(info['observation_opportunities'])}"
         )
 
-        if info["safety_mode"] == "observe" and info["observation_readiness"]:
+        if info["safety_mode"] in {"observe", "readonly"} and info["observation_readiness"]:
             obs = info["observation_readiness"]
             estimates = obs.get("transfer_estimates") or ()
             if estimates:
