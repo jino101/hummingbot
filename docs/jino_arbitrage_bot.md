@@ -234,3 +234,47 @@ withdrawal permission disabled.
 The live harness itself can be syntax/unit tested without real credentials. A real live execution
 cannot be validated in CI because it requires the operator's exchange accounts, API keys, balances,
 and current exchange/network state.
+
+
+### Observe-only real-market phase
+
+Before any real order test, Jino now has a dedicated `safety_mode=observe` phase.
+
+In this mode the controller has a hard execution block: `determine_executor_actions()` always
+returns an empty action list. It cannot create an ArbitrageExecutor and therefore cannot place
+orders through the strategy.
+
+The observe phase reads real exchange data and evaluates hypothetical opportunities:
+
+- Binance + KuCoin connector health and balances;
+- API permissions, requiring read-only keys for this phase;
+- live order-book depth for the configured quote notional;
+- estimated taker fees and configured slippage allowance;
+- deposit/withdraw availability and withdrawal fees by blockchain network;
+- common rebalance networks across both exchanges;
+- exchange-provided transfer ETA when available;
+- otherwise a conservative confirmation-based blockchain ETA estimate;
+- expected hypothetical profit before and after rebalance cost.
+
+Start it only after read-only API credentials have been configured:
+
+```bash
+bash scripts/jino_arbitrage_observe.sh
+```
+
+The status output shows whether a hypothetical trade is feasible, the number of observed
+opportunities, network transfer-time estimates, and the best current hypothetical route. It is
+explicitly labelled `NO ORDER`.
+
+During this phase keep **spot trading disabled** and **withdrawal disabled** on both API keys.
+Trading permissions are not required for observation and are deliberately treated as a failed
+read-only safety check.
+
+The next user-visible validation milestone is:
+
+1. pull the latest branch;
+2. run the complete paper validation once more;
+3. configure read-only Binance and KuCoin keys;
+4. start observe mode;
+5. verify that live market/network data appears while executor/order count stays zero;
+6. collect real observations before deciding whether to enable any trading permission.
