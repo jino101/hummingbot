@@ -93,6 +93,7 @@ class ObservationReport:
     reasons: Tuple[str, ...]
     common_rebalance_networks: Tuple[str, ...] = ()
     transfer_estimates: Tuple[NetworkTransferEstimate, ...] = ()
+    network_snapshots: Tuple[NetworkSnapshot, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -451,6 +452,7 @@ def assess_observation_readiness(
         reasons=tuple(dict.fromkeys(reasons)),
         common_rebalance_networks=common,
         transfer_estimates=build_common_transfer_estimates(snapshots),
+        network_snapshots=tuple(snapshots),
     )
 
 
