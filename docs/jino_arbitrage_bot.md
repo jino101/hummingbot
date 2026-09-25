@@ -256,25 +256,31 @@ The observe phase reads real exchange data and evaluates hypothetical opportunit
 - otherwise a conservative confirmation-based blockchain ETA estimate;
 - expected hypothetical profit before and after rebalance cost.
 
-Start it only after read-only API credentials have been configured:
+Start it with no exchange API keys:
 
 ```bash
 bash scripts/jino_arbitrage_observe.sh
 ```
 
-The status output shows whether a hypothetical trade is feasible, the number of observed
-opportunities, network transfer-time estimates, and the best current hypothetical route. It is
-explicitly labelled `NO ORDER`.
+This first observation stage intentionally uses `binance_paper_trade` and
+`kucoin_paper_trade`. Those connectors subscribe to public market data but cannot authenticate
+an exchange account. Therefore the bot can inspect current order-book prices and hypothetical
+spread/fee/slippage calculations without having credentials capable of trading.
 
-During this phase keep **spot trading disabled** and **withdrawal disabled** on both API keys.
-Trading permissions are not required for observation and are deliberately treated as a failed
-read-only safety check.
+The status output separates what is actually known from what is not:
+
+- `market_ready`: public market feeds are healthy;
+- `observe_opps`: current hypothetical opportunities for the configured amount;
+- `transfer_verified=false`: expected until authenticated read-only exchange metadata is added;
+- account balances, authenticated deposit/withdraw status, and exact withdrawal fees are marked
+  unverified instead of being guessed.
 
 The next user-visible validation milestone is:
 
 1. pull the latest branch;
 2. run the complete paper validation once more;
-3. configure read-only Binance and KuCoin keys;
-4. start observe mode;
-5. verify that live market/network data appears while executor/order count stays zero;
-6. collect real observations before deciding whether to enable any trading permission.
+3. start credential-free observe mode;
+4. verify public Binance/KuCoin order-book data appears while executor/order count stays zero;
+5. collect observations;
+6. only later, if wanted, add a separate read-only-key metadata stage for account balances and
+   authenticated transfer details. Trading and withdrawal permissions remain disabled.
