@@ -238,7 +238,6 @@ class JinoCrossExchangeArbitrageController(ArbitrageController):
                     }
                     for item in opportunities[:10]
                 )
-            self._persist_observation()
             except Exception as exc:
                 self._last_live_readiness_probe_at = now
                 self.logger().error(f"Jino observation probe failed: {exc}")
