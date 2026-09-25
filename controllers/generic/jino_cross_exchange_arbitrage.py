@@ -145,7 +145,11 @@ class JinoCrossExchangeArbitrageController(ArbitrageController):
             return
 
         now = self.market_data_provider.time()
-        current = self.processed_data.get("live_readiness")
+        current = (
+            self.processed_data.get("observation_readiness")
+            if self.config.safety_mode == "observe"
+            else self.processed_data.get("live_readiness")
+        )
         probe_interval = min(30.0, max(10.0, self.config.live_readiness_max_age_seconds / 2))
         if current and now - self._last_live_readiness_probe_at < probe_interval:
             return
@@ -232,6 +236,7 @@ class JinoCrossExchangeArbitrageController(ArbitrageController):
                     "common_rebalance_networks": (),
                     "transfer_estimates": (),
                 }
+                self.processed_data["observation_opportunities"] = ()
             self.processed_data["live_readiness"] = None
             return
         if self.config.exchange_pair_1.trading_pair != self.config.exchange_pair_2.trading_pair:
@@ -353,4 +358,28 @@ class JinoCrossExchangeArbitrageController(ArbitrageController):
             f"observe_ok={None if info['observation_readiness'] is None else info['observation_readiness'].get('hypothetical_trade_feasible')} | "
             f"observe_opps={len(info['observation_opportunities'])}"
         )
+
+        if info["safety_mode"] == "observe" and info["observation_readiness"]:
+            obs = info["observation_readiness"]
+            estimates = obs.get("transfer_estimates") or ()
+            if estimates:
+                eta_text = ", ".join(
+                    f"{item['network']}="
+                    f"{item['estimated_minutes'] if item['estimated_minutes'] is not None else '?'}m"
+                    for item in estimates
+                )
+                lines.append(f"Jino observed transfer ETA: {eta_text}")
+
+            if info["observation_opportunities"]:
+                best = info["observation_opportunities"][0]
+                lines.append(
+                    "Jino best hypothetical trade (NO ORDER): "
+                    f"{best['trading_pair']} buy={best['buy_exchange']} @{best['buy_price']} | "
+                    f"sell={best['sell_exchange']} @{best['sell_price']} | "
+                    f"net={best['net_spread_pct']} | "
+                    f"after_rebalance={best['expected_profit_after_rebalance_quote']} "
+                    f"{self.config.quote_conversion_asset}"
+                )
+            elif obs.get("reasons"):
+                lines.append("Jino observe notes: " + "; ".join(str(x) for x in obs["reasons"][:3]))
         return lines
