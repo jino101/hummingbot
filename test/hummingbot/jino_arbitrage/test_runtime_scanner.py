@@ -2,7 +2,13 @@ from decimal import Decimal
 from unittest.mock import MagicMock
 
 from hummingbot.core.data_type.common import PriceType
-from hummingbot.jino_arbitrage.runtime_scanner import build_provider_quotes, scan_provider_pair, scan_provider_pairs
+from hummingbot.jino_arbitrage.runtime_scanner import (
+    build_provider_quotes,
+    build_provider_quotes_for_quote_amount,
+    scan_provider_pair,
+    scan_provider_pair_for_quote_amount,
+    scan_provider_pairs,
+)
 from hummingbot.jino_arbitrage.scanner import ScannerPolicy
 
 
@@ -103,3 +109,70 @@ def test_runtime_scanner_can_rank_multiple_pairs():
     assert opportunities
     assert {item.trading_pair for item in opportunities} == {"BTC-USDT", "ETH-USDT"}
     assert opportunities[0].net_spread_pct >= opportunities[-1].net_spread_pct
+
+
+def test_amount_aware_read_only_scanner_uses_depth_and_fees():
+    provider = MagicMock()
+    provider.time.return_value = 1000.0
+
+    def depth(connector, pair, quote_volume, is_buy):
+        result = MagicMock()
+        prices = {
+            ("binance", True): Decimal("100"),
+            ("binance", False): Decimal("99.8"),
+            ("kucoin", True): Decimal("102"),
+            ("kucoin", False): Decimal("103"),
+        }
+        result.result_price = prices[(connector, is_buy)]
+        return result
+
+    provider.get_price_for_quote_volume.side_effect = depth
+
+    connectors = {}
+    for name in ("binance", "kucoin"):
+        connector = MagicMock()
+        fee = MagicMock()
+        fee.percent = Decimal("0.001")
+        connector.get_fee.return_value = fee
+        connectors[name] = connector
+    provider.get_connector.side_effect = lambda name: connectors[name]
+
+    quotes = build_provider_quotes_for_quote_amount(
+        provider,
+        ["binance", "kucoin"],
+        "BTC-USDT",
+        Decimal("25"),
+    )
+    assert len(quotes) == 2
+    assert quotes[0].buy_price == Decimal("100")
+    assert quotes[1].sell_price == Decimal("103")
+    assert all(q.taker_fee_pct == Decimal("0.001") for q in quotes)
+
+    opportunities = scan_provider_pair_for_quote_amount(
+        provider,
+        ["binance", "kucoin"],
+        "BTC-USDT",
+        Decimal("25"),
+        ScannerPolicy(
+            min_net_spread_pct=Decimal("0"),
+            estimated_slippage_pct=Decimal("0.001"),
+            max_quote_age_seconds=5,
+        ),
+    )
+    assert opportunities
+    assert opportunities[0].buy_exchange == "binance"
+    assert opportunities[0].sell_exchange == "kucoin"
+
+
+def test_amount_aware_read_only_scanner_skips_bad_connector():
+    provider = MagicMock()
+    provider.time.return_value = 1000.0
+    provider.get_price_for_quote_volume.side_effect = RuntimeError("depth unavailable")
+
+    quotes = build_provider_quotes_for_quote_amount(
+        provider,
+        ["binance"],
+        "BTC-USDT",
+        Decimal("25"),
+    )
+    assert quotes == []
