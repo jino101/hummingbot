@@ -24,6 +24,7 @@ on:
       - 'scripts/jino_arbitrage_paper_execution.sh'
       - 'scripts/jino_arbitrage_paper_validate.sh'
       - 'scripts/jino_arbitrage_tiny_live.sh'
+      - 'scripts/jino_arbitrage_observe.sh'
       - '.github/workflows/jino_arbitrage_ci.yml'
   workflow_dispatch:
 
@@ -53,6 +54,7 @@ jobs:
           bash -n scripts/jino_arbitrage_paper_execution.sh
           bash -n scripts/jino_arbitrage_paper_validate.sh
           bash -n scripts/jino_arbitrage_tiny_live.sh
+          bash -n scripts/jino_arbitrage_observe.sh
       - name: Run Jino arbitrage tests
         shell: bash
         run: |
