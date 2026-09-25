@@ -73,20 +73,27 @@ class JinoCrossExchangeArbitrageConfig(ArbitrageControllerConfig):
         if base_1 != base_2:
             raise ValueError("both exchange pairs must share the same base asset")
 
-        if self.safety_mode == "paper":
+        if self.safety_mode in {"paper", "observe"}:
             live_connectors = [name for name in connectors if not name.endswith("_paper_trade")]
             if live_connectors:
+                mode_note = (
+                    "paper mode"
+                    if self.safety_mode == "paper"
+                    else "credential-free observe mode"
+                )
                 raise ValueError(
-                    "safety_mode=paper only accepts *_paper_trade connectors, including rate_connector. "
+                    f"{mode_note} only accepts *_paper_trade connectors, including rate_connector. "
                     f"Live connector(s) supplied: {', '.join(live_connectors)}"
                 )
+            if self.safety_mode == "observe" and self.paper_test_force_execution:
+                raise ValueError("paper_test_force_execution is not allowed in safety_mode=observe")
         else:
             if self.paper_test_force_execution:
                 raise ValueError("paper_test_force_execution is only allowed in safety_mode=paper")
             paper_connectors = [name for name in connectors if name.endswith("_paper_trade")]
             if paper_connectors:
                 raise ValueError(
-                    f"safety_mode={self.safety_mode} cannot use *_paper_trade connectors. "
+                    "safety_mode=live cannot use *_paper_trade connectors. "
                     f"Paper connector(s) supplied: {', '.join(paper_connectors)}"
                 )
         return self
@@ -172,6 +179,10 @@ class JinoCrossExchangeArbitrageController(ArbitrageController):
                 self._last_live_readiness_probe_at = now
                 self.processed_data["observation_readiness"] = {
                     "safe_read_only": report.safe_read_only,
+                    "credential_free": report.credential_free,
+                    "market_data_ready": report.market_data_ready,
+                    "account_data_verified": report.account_data_verified,
+                    "transfer_route_verified": report.transfer_route_verified,
                     "hypothetical_trade_feasible": report.hypothetical_trade_feasible,
                     "reasons": report.reasons,
                     "common_rebalance_networks": report.common_rebalance_networks,
@@ -200,7 +211,7 @@ class JinoCrossExchangeArbitrageController(ArbitrageController):
                     policy=ScannerPolicy(
                         min_net_spread_pct=self.config.observe_min_net_spread_pct,
                         estimated_slippage_pct=self.config.observe_estimated_slippage_pct,
-                        require_rebalance_transferable=True,
+                        require_rebalance_transferable=not report.credential_free,
                         max_quote_age_seconds=self.config.live_readiness_max_age_seconds,
                     ),
                     networks=network_map,
@@ -231,6 +242,10 @@ class JinoCrossExchangeArbitrageController(ArbitrageController):
                 self.logger().error(f"Jino observation probe failed: {exc}")
                 self.processed_data["observation_readiness"] = {
                     "safe_read_only": False,
+                    "credential_free": True,
+                    "market_data_ready": False,
+                    "account_data_verified": False,
+                    "transfer_route_verified": False,
                     "hypothetical_trade_feasible": False,
                     "reasons": (f"observation probe failed: {exc}",),
                     "common_rebalance_networks": (),
@@ -355,7 +370,8 @@ class JinoCrossExchangeArbitrageController(ArbitrageController):
             f"completed={info['completed_trades_today']}/{info['completed_trade_limit']} | "
             f"gate={info['risk_gate']} | "
             f"live_ready={None if info['live_readiness'] is None else info['live_readiness'].get('ready')} | "
-            f"observe_ok={None if info['observation_readiness'] is None else info['observation_readiness'].get('hypothetical_trade_feasible')} | "
+            f"market_ready={None if info['observation_readiness'] is None else info['observation_readiness'].get('market_data_ready')} | "
+            f"transfer_verified={None if info['observation_readiness'] is None else info['observation_readiness'].get('transfer_route_verified')} | "
             f"observe_opps={len(info['observation_opportunities'])}"
         )
 
