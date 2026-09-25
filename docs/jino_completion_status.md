@@ -51,6 +51,14 @@ bash scripts/jino_dashboard.sh
 
 The dashboard exposes status/history and can engage the kill switch. It intentionally has no endpoint to start live trading or disable the kill switch.
 
+### Dashboard access token
+
+On every dashboard start, a random `JINO DASHBOARD TOKEN` is printed unless
+`JINO_DASHBOARD_TOKEN` is explicitly supplied. Status/history endpoints require this bearer token.
+The web UI asks for the token and stores it only in the browser session. Keep the Codespaces port
+private. In Codespaces the launcher also prints the HTTPS forwarding URL that can be entered in the
+Android app.
+
 ## Authenticated read-only stage
 
 After read-only exchange keys are configured:
