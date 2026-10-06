@@ -8,6 +8,9 @@
   "slippage": "0.001",
   "max_deploy_fraction": "0.5",
   "stress_fraction": "0.01",
+  "pair_mode": "auto",
+  "batch_size": 12,
+  "deny_pairs": [],
   "pairs": ["BTC-USDT", "ETH-USDT", "ETH-BTC"],
   "fees": {"kucoin": "0.002", "binance": "0.002", "bitget": "0.002"},
   "bots": {

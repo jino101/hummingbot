@@ -20,6 +20,8 @@ function render(state) {
     card.append(textNode('p',Number(bot.capital).toFixed(4)+' USDT · PnL '+Number(bot.pnl).toFixed(4)+' USDT'));
     const stale=(Date.now()/1000-bot.updated)>30;
     card.append(textNode('p',(bot.enabled?'Paper aktiv':'Gestoppt')+' · Daten '+(stale?'veraltet / fehlen':'aktuell')));
+    const universe=bot.status.universe || {};
+    if(universe.mode==='auto') card.append(textNode('p','Automatische Märkte: '+(universe.scheduled_pairs || 0)+' Paare · Gruppe '+(universe.batch_number || 0)+' / '+(universe.batch_count || 0)+' · REST-Rotation, nicht gleichzeitig'));
     const row=textNode('div',''); row.className='row';
     for(const [verb,label] of [['start','Start'],['stop','Stop']]) {
       const button=textNode('button',label); button.disabled=verb==='start' && state.halt;

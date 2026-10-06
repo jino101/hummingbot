@@ -59,6 +59,7 @@ class WorkerTests(unittest.TestCase):
         self.tmp=tempfile.TemporaryDirectory()
         self.store=Store(Path(self.tmp.name)/'paper.sqlite')
         self.config=load_config('jin_trading/config.example.json')
+        self.config['pair_mode']='manual'
         self.store.configure({bot:spec['budget'] for bot,spec in self.config['bots'].items()})
         self.worker=Worker(self.store,self.config)
 
@@ -79,7 +80,7 @@ class WorkerTests(unittest.TestCase):
         self.worker.tick()
         state=self.store.snapshot()
         self.assertEqual(len(state['trades']),0)
-        self.assertEqual(len(state['bots'][0]['status']['errors']),9)
+        self.assertEqual(len(state['bots'][0]['status']['errors']),3)
 
     def test_config_rejects_live_and_unbounded_risk(self):
         for key,value in [('mode','live'),('poll_seconds',0),('slippage','0'),('min_profit','-1'),('max_age',0),('pairs',[]),('stress_fraction','0'),('max_deploy_fraction','1')]:

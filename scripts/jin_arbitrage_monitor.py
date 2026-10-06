@@ -22,6 +22,8 @@ class JinArbitrageMonitorConfig(StrategyV2ConfigBase):
 
     def update_markets(self, markets: MarketDict) -> MarketDict:
         config = load_config(self.jin_config_path)
+        if config.get('pair_mode') == 'auto':
+            raise ValueError('Auto universe uses the REST worker; WebSocket bridge requires pair_mode=manual')
         for exchange in config['fees']:
             markets[exchange] = markets.get(exchange, set()) | set(config['pairs'])
         return markets

@@ -8,6 +8,7 @@ from decimal import Decimal
 
 from jin_trading.arbitrage import number, scan
 from jin_trading.feeds import PublicFeed
+from jin_trading.universe import plan_batches
 
 
 def load_config(path):
@@ -27,8 +28,17 @@ def load_config(path):
         raise ValueError('Invalid profit threshold')
     if not 0 < float(config['max_age']) <= 10:
         raise ValueError('Invalid quote freshness window')
-    if not config['pairs'] or len(config['pairs']) > 20:
-        raise ValueError('Configure between 1 and 20 pairs')
+    if config.get('pair_mode', 'manual') not in ('manual', 'auto'):
+        raise ValueError('Unknown pair mode')
+    if config.get('pair_mode', 'manual') == 'manual' and (not config['pairs'] or len(config['pairs']) > 20):
+        raise ValueError('Manual mode requires 1–20 pairs')
+    for pair in config.get('pairs', []) + config.get('deny_pairs', []):
+        parts = pair.split('-')
+        if len(parts) != 2 or not all(parts) or parts[0] == parts[1] or pair != pair.upper():
+            raise ValueError('Invalid pair format')
+    batch = config.get('batch_size', 12)
+    if isinstance(batch, bool) or not isinstance(batch, int) or not 3 <= batch <= 20:
+        raise ValueError('Batch size must be 3–20')
     for spec in config['bots'].values():
         if spec['exchange'] not in config['fees']:
             raise ValueError('Bot exchange needs a fee assumption')
@@ -40,17 +50,45 @@ class Worker:
         self.store, self.config = store, config
         self.feeds = {ex: PublicFeed(ex, fee) for ex, fee in config['fees'].items()}
         self.stop = threading.Event()
+        self.batch_index = 0
+        self.universe_status = {'mode': config.get('pair_mode', 'manual')}
 
     def tick(self):
         books, errors = [], []
+        venue_pairs = {}
+        if self.config.get('pair_mode', 'manual') == 'auto':
+            def discover(feed):
+                try:
+                    return feed.exchange, feed.pairs(), None
+                except Exception as exc:
+                    return feed.exchange, (), f'{feed.exchange} discovery: {type(exc).__name__}: {exc}'
+            with ThreadPoolExecutor(max_workers=len(self.feeds)) as pool:
+                for exchange, pairs, failure in pool.map(discover, self.feeds.values()):
+                    venue_pairs[exchange] = pairs
+                    if failure:
+                        errors.append(failure)
+            batches = plan_batches(venue_pairs, self.config.get('batch_size', 12), self.config.get('deny_pairs', []))
+            index = self.batch_index % len(batches) if batches else 0
+            selected = batches[index] if batches else ()
+            self.batch_index += 1
+            self.universe_status = {'mode': 'auto', 'catalogue_pairs': {ex: len(p) for ex, p in venue_pairs.items()},
+                                    'scheduled_pairs': len({p for batch in batches for p in batch}),
+                                    'batch_count': len(batches), 'batch_number': index + 1 if batches else 0,
+                                    'selected_pairs': selected, 'coverage': 'Rotating REST batches; not simultaneous'}
+        else:
+            selected = self.config['pairs']
         # One task per exchange: refresh rules once; pairs sequentially avoid a rule-cache race.
         def collect(feed):
             found, failures = [], []
-            for pair in self.config['pairs']:
+            for pair in selected:
+                if venue_pairs and pair not in venue_pairs.get(feed.exchange, ()):
+                    continue
                 try:
                     found.append(feed.book(pair))
                 except Exception as exc:
                     failures.append(f'{feed.exchange} {pair}: {type(exc).__name__}: {exc}')
+                    # Do not hammer every remaining market during outages/rate limiting.
+                    break
             return found, failures
         with ThreadPoolExecutor(max_workers=len(self.feeds)) as pool:
             for future in as_completed([pool.submit(collect, f) for f in self.feeds.values()]):
@@ -79,6 +117,7 @@ class Worker:
             self.store.publish(bot['id'], {
                 'feed': self.config.get('feed_label', 'REST polling'), 'books_received': len(books), 'errors': errors,
                 'fee_assumptions': self.config['fees'], 'estimated_stress_loss': str(amount * number(self.config['stress_fraction'])),
+                'universe': self.universe_status,
                 'opportunities': [asdict(o) | {'net_fraction': str(o.net_fraction)} for o in opportunities[:20]],
                 'live_readiness': 'Not implemented', 'updated_at': time.time()})
 

@@ -3,6 +3,7 @@ from dataclasses import dataclass
 from decimal import Decimal, ROUND_DOWN
 from itertools import permutations
 from typing import Tuple
+from collections import defaultdict
 
 
 def number(value):
@@ -121,9 +122,27 @@ def scan(books, amount, now, start_asset="USDT", max_age=3.0, min_profit=Decimal
         raise ValueError("Invalid scan settings")
     books = [b for b in books if 0 <= now - b.timestamp <= max_age]
     results = []
-    for route in permutations(books, 3):
-        if len({b.exchange for b in route}) != 1:
-            continue
+    adjacency = defaultdict(lambda: defaultdict(list))
+    quoted = defaultdict(list)
+    for book in books:
+        for asset in book.assets:
+            adjacency[book.exchange][asset].append(book)
+        if book.assets[1] == start_asset:
+            quoted[book.pair].append(book)
+    def triangle_routes():
+        for edges in adjacency.values():
+            for first in edges[start_asset]:
+                asset = next(a for a in first.assets if a != start_asset)
+                for second in edges[asset]:
+                    if second == first:
+                        continue
+                    middle = next(a for a in second.assets if a != asset)
+                    if middle == start_asset:
+                        continue
+                    for third in edges[middle]:
+                        if start_asset in third.assets:
+                            yield first, second, third
+    for route in triangle_routes():
         asset, output = start_asset, amount
         visited = [asset]
         try:
@@ -138,8 +157,8 @@ def scan(books, amount, now, start_asset="USDT", max_age=3.0, min_profit=Decimal
                            "|".join(f"{b.exchange}:{b.pair}:{b.sequence}" for b in route))
         if item.net_fraction >= min_profit:
             results.append(item)
-    for buy, sell in permutations(books, 2):
-        if buy.exchange == sell.exchange or buy.pair != sell.pair or buy.assets[1] != start_asset:
+    for buy, sell in (route for matches in quoted.values() for route in permutations(matches, 2)):
+        if buy.exchange == sell.exchange:
             continue
         try:
             base, quantity = buy.convert(start_asset, amount, slippage)

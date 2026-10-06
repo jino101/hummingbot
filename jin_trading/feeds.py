@@ -8,6 +8,7 @@ import time
 from decimal import Decimal
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
+from urllib.error import HTTPError
 
 from jin_trading.arbitrage import Book, number
 
@@ -31,9 +32,24 @@ class PublicFeed:
         if not 0 <= self.fee < 1:
             raise ValueError('Invalid fee')
         self.rules, self.rules_at = {}, 0
+        self.next_request, self.blocked_until = 0, 0
+        self.request_interval = 0.25
 
     def get(self, path, **query):
-        value = self.fetch(HOSTS[self.exchange] + path + ('?' + urlencode(query) if query else ''))
+        if time.monotonic() < self.blocked_until:
+            raise ValueError('Exchange cooling down after HTTP rejection')
+        time.sleep(max(0, self.next_request - time.monotonic()))
+        self.next_request = time.monotonic() + self.request_interval
+        try:
+            value = self.fetch(HOSTS[self.exchange] + path + ('?' + urlencode(query) if query else ''))
+        except HTTPError as exc:
+            if exc.code in (418, 429, 451):
+                try:
+                    delay = max(60, min(3600, float(exc.headers.get('Retry-After', '60'))))
+                except (ValueError, TypeError):
+                    delay = 60
+                self.blocked_until = time.monotonic() + delay
+            raise
         if self.exchange == 'kucoin':
             if value.get('code') != '200000':
                 raise ValueError('KuCoin API rejected request')
@@ -55,7 +71,8 @@ class PublicFeed:
                                               number(item['minFunds']), number(item['baseMaxSize']))
         elif self.exchange == 'binance':
             for item in self.get('/api/v3/exchangeInfo')['symbols']:
-                if item.get('status') != 'TRADING' or 'MARKET' not in item.get('orderTypes', []):
+                if (item.get('status') != 'TRADING' or not item.get('isSpotTradingAllowed', True)
+                        or 'MARKET' not in item.get('orderTypes', [])):
                     continue
                 filters = {f['filterType']: f for f in item['filters']}
                 lot = filters['LOT_SIZE']
@@ -74,6 +91,11 @@ class PublicFeed:
                         Decimal(10) ** -int(item['quantityPrecision']), number(item['minTradeAmount']),
                         number(item['minTradeUSDT']), number(item['maxTradeAmount']))
         self.rules, self.rules_at = rules, time.time()
+
+    def pairs(self):
+        if time.time() - self.rules_at > 900:
+            self.refresh_rules()
+        return tuple(sorted(self.rules))
 
     def book(self, pair):
         if time.time() - self.rules_at > 900:

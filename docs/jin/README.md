@@ -71,6 +71,36 @@ opportunity may meet the minimums. This is a valid outcome, not an error to bypa
 Bitget's REST adapter currently monitors only USDT-quoted pairs because its
 USDT-denominated minimum cannot be blindly treated as a BTC minimum.
 
+### Maximum coin universe
+
+The example now defaults to `pair_mode: auto`. Every 15 minutes, the public
+symbol catalogue is refreshed. All supported active USDT pairs and all complete
+three-asset routes returning to USDT on the same exchange enter the schedule.
+There is no fixed coin-count cap. Binance spot eligibility is checked; Bitget
+remains USDT-only until non-USDT minimum conversion is implemented. Other disconnected
+quote markets cannot use a USDT starting balance and are not scheduled.
+
+`batch_size: 12` limits concurrent-cycle coverage, not the total universe. Complete
+triangle groups are kept together and batches rotate fairly. The dashboard shows
+catalogue/scheduled pair counts and the current batch. Larger universes take longer
+to revisit; this is not simultaneous full-market monitoring or HFT. Requests are
+spaced by at least 250 ms per exchange, HTTP 418/429/451 trigger cooldown, and an
+outage aborts the remaining requests on that venue. Freshness, depth, fees and
+minimum amounts still determine whether a candidate can be estimated.
+
+Use `deny_pairs` to exclude pairs. To retain the original three-pair setup or use
+the Hummingbot WebSocket bridge, set `pair_mode: manual`; `pairs` then controls the
+subscriptions. The old controller's `observe_pairs` remains manually configured
+and its live pair is never expanded automatically. Public symbol availability
+does not prove deposit/withdrawal availability or token identity across venues.
+
+The scanner now traverses connected currency edges instead of enumerating every
+permutation of all books. Offline regression coverage includes 2,000 coins / 4,001
+pairs, route-complete bounded batches, rotation, discovery outages and rate-limit
+cooldown. Actual current exchange counts require reachable public APIs.
+
+See [ROADMAP.md](ROADMAP.md) for the remaining work and acceptance criteria.
+
 For Docker:
 
 ```bash
@@ -87,8 +117,9 @@ A 24/7 host and its connection are not provisioned by this commit.
 
 `scripts/jin_arbitrage_monitor.py` reads existing connectors' order books and
 freshness metrics into the same ledger. It never calls buy/sell/order-submission
-methods and rejects nonempty controller configurations. It needs a compiled
-Hummingbot environment with working spot connectors, current trading rules and
+methods and rejects nonempty controller configurations. Set `pair_mode` to `manual`
+in the JIN config before using this bridge. It needs a compiled Hummingbot
+environment with working spot connectors, current trading rules and
 freshness metrics. It uses the configured conservative fee assumptions, not verified
 personal account fee tiers. Connecting a real connector may require keys in
 Hummingbot even though this script places no orders.
