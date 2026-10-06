@@ -62,6 +62,39 @@ class PublicFeed:
             raise ValueError('Binance API rejected request')
         return value
 
+    @staticmethod
+    def _bitget_quote_usdt_prices(tickers):
+        """Return quote-asset values in USDT from one all-spot-tickers snapshot.
+
+        Direct ASSET-USDT prices are preferred. Inverse USDT-ASSET markets are
+        accepted only when a positive finite price is available. Missing
+        conversions intentionally cause the related non-USDT rule to be skipped.
+        """
+        raw = {}
+        for item in tickers:
+            symbol = str(item.get('symbol', '')).upper()
+            try:
+                price = number(item.get('lastPrice'))
+            except (ValueError, TypeError):
+                continue
+            if symbol and price > 0:
+                raw[symbol] = price
+        prices = {'USDT': Decimal('1')}
+        assets = set()
+        for symbol in raw:
+            if symbol.endswith('USDT') and len(symbol) > 4:
+                assets.add(symbol[:-4])
+            if symbol.startswith('USDT') and len(symbol) > 4:
+                assets.add(symbol[4:])
+        for asset in assets:
+            direct = raw.get(asset + 'USDT')
+            inverse = raw.get('USDT' + asset)
+            if direct and direct > 0:
+                prices[asset] = direct
+            elif inverse and inverse > 0:
+                prices[asset] = Decimal('1') / inverse
+        return prices
+
     def refresh_rules(self):
         rules = {}
         if self.exchange == 'kucoin':
@@ -84,12 +117,22 @@ class PublicFeed:
                                number(filters.get('NOTIONAL', {}).get('minNotional', 0)))
                 rules[f"{item['baseAsset']}-{item['quoteAsset']}"] = (step, minimum, notional, maximum)
         else:
-            for item in self.get('/api/v2/spot/public/symbols'):
-                # minTradeUSDT cannot be treated as a BTC-denominated minimum.
-                if item.get('status') == 'online' and item['quoteCoin'] == 'USDT':
-                    rules[f"{item['baseCoin']}-{item['quoteCoin']}"] = (
-                        Decimal(10) ** -int(item['quantityPrecision']), number(item['minTradeAmount']),
-                        number(item['minTradeUSDT']), number(item['maxTradeAmount']))
+            instruments = self.get('/api/v2/spot/public/symbols')
+            tickers = self.get('/api/v3/market/tickers', category='SPOT')
+            quote_usdt = self._bitget_quote_usdt_prices(tickers)
+            for item in instruments:
+                if item.get('status') != 'online':
+                    continue
+                quote = item['quoteCoin']
+                quote_price = quote_usdt.get(quote)
+                if not quote_price or quote_price <= 0:
+                    continue
+                # Bitget exposes minTradeUSDT in USDT even for non-USDT quoted
+                # markets. Book.convert() expects min_notional in quote units.
+                min_notional_quote = number(item['minTradeUSDT']) / quote_price
+                rules[f"{item['baseCoin']}-{quote}"] = (
+                    Decimal(10) ** -int(item['quantityPrecision']), number(item['minTradeAmount']),
+                    min_notional_quote, number(item['maxTradeAmount']))
         self.rules, self.rules_at = rules, time.time()
 
     def pairs(self):
