@@ -1,0 +1,15 @@
+{
+  "mode": "paper",
+  "poll_seconds": 5,
+  "max_age": 3,
+  "min_profit": "0.0035",
+  "slippage": "0.001",
+  "max_deploy_fraction": "0.5",
+  "stress_fraction": "0.01",
+  "pairs": ["BTC-USDT", "ETH-USDT", "ETH-BTC"],
+  "fees": {"kucoin": "0.002", "binance": "0.002", "bitget": "0.002"},
+  "bots": {
+    "kucoin-triangle": {"exchange": "kucoin", "budget": "2.5"},
+    "binance-triangle": {"exchange": "binance", "budget": "2.5"}
+  }
+}

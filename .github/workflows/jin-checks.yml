@@ -1,0 +1,21 @@
+name: JIN paper trading checks
+on:
+  push:
+    paths: ['jin_trading/**', 'tests_jin/**', 'scripts/jin_arbitrage_monitor.py', 'hummingbot/strategy_v2/executors/arbitrage_executor/**', 'controllers/generic/arbitrage_controller.py', '.github/workflows/jin-checks.yml']
+  pull_request:
+    paths: ['jin_trading/**', 'tests_jin/**', 'scripts/jin_arbitrage_monitor.py', 'hummingbot/strategy_v2/executors/arbitrage_executor/**', 'controllers/generic/arbitrage_controller.py', '.github/workflows/jin-checks.yml']
+permissions:
+  contents: read
+jobs:
+  paper-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python -m pip install coverage==7.16.2
+      - run: python -m compileall -q jin_trading scripts/jin_arbitrage_monitor.py controllers/generic/arbitrage_controller.py hummingbot/strategy_v2/executors/arbitrage_executor/arbitrage_executor.py
+      - run: python -m coverage run --rcfile=/dev/null --branch --source=jin_trading -m unittest discover -s tests_jin
+      - run: python -m coverage report --rcfile=/dev/null --fail-under=80

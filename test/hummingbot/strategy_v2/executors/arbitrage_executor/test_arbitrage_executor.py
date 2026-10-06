@@ -63,7 +63,7 @@ class TestArbitrageExecutor(IsolatedAsyncioWrapperTestCase, LoggerMixinForTest):
         self.executor._sell_order.cum_fees_quote = Decimal('1')
         self.executor._status = RunnableStatus.TERMINATED
         self.assertEqual(self.executor.get_net_pnl_quote(), Decimal('98'))
-        self.assertEqual(self.executor.get_net_pnl_pct(), Decimal('98'))
+        self.assertEqual(self.executor.get_net_pnl_pct(), Decimal('0.98'))
 
     @patch.object(ArbitrageExecutor, "get_resulting_price_for_amount")
     @patch.object(ArbitrageExecutor, "get_tx_cost_in_asset")
@@ -135,3 +135,21 @@ class TestArbitrageExecutor(IsolatedAsyncioWrapperTestCase, LoggerMixinForTest):
         )
         self.executor.process_order_failed_event("102", market, sell_order_failed_event)
         self.assertEqual(self.executor._cumulative_failures, 2)
+
+    def test_net_pnl_converts_sell_quote_and_fees(self):
+        self.test_net_pnl_quote()
+        self.executor._quote_conversion_rate = Decimal("0.5")
+        self.assertEqual(self.executor.get_net_pnl_quote(), Decimal("-1.5"))
+        self.assertEqual(self.executor.get_net_pnl_pct(), Decimal("-0.015"))
+
+    @patch.object(ArbitrageExecutor, "place_order")
+    def test_failure_does_not_resubmit_partial_leg(self, place_order):
+        self.executor.buy_order.order_id = "partial-buy"
+        self.executor.process_order_failed_event(None, None, MarketOrderFailureEvent(
+            timestamp=1, order_id="partial-buy", order_type=OrderType.MARKET))
+        place_order.assert_not_called()
+        self.assertEqual(self.executor.close_type, CloseType.FAILED)
+
+    def test_status_without_price_returns_list(self):
+        self.executor._last_buy_price = Decimal("0")
+        self.assertIsInstance(self.executor.to_format_status(), list)
