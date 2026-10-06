@@ -3,5 +3,5 @@ WORKDIR /app
 COPY jin_trading /app/jin_trading
 RUN useradd --uid 10001 --create-home jin && mkdir /app/data && chown jin:jin /app/data
 USER jin
-EXPOSE 8787
-CMD ["python", "-m", "jin_trading.server", "--host", "0.0.0.0"]
+EXPOSE 8788
+CMD ["python", "-m", "jin_trading.server", "--host", "0.0.0.0", "--port", "8788"]

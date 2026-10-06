@@ -1,0 +1,9 @@
+{
+  "name":"Jino Arbitrage Monitor",
+  "short_name":"Jino",
+  "start_url":"/",
+  "display":"standalone",
+  "background_color":"#070b14",
+  "theme_color":"#0b1020",
+  "description":"Read-only Jino arbitrage dashboard"
+}

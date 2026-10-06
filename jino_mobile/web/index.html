@@ -1,0 +1,77 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta name="theme-color" content="#0b1020">
+  <title>Jino Arbitrage</title>
+  <link rel="manifest" href="/manifest.webmanifest">
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <main>
+    <header>
+      <div>
+        <h1>JINO</h1>
+        <p>Arbitrage Monitor</p>
+      </div>
+      <span id="mode" class="pill">–</span>
+    </header>
+
+    <section id="authCard" class="card">
+      <div class="section-title">Dashboard entsperren</div>
+      <p class="muted">Gib den Token ein, der beim Start von <code>jino_dashboard.sh</code> im Terminal angezeigt wird.</p>
+      <input id="tokenInput" class="token-input" type="password" autocomplete="off" placeholder="Dashboard-Token">
+      <button id="loginButton">VERBINDEN</button>
+      <div id="authError" class="bad small"></div>
+    </section>
+
+    <div id="dashboard" hidden>
+    <section class="grid">
+      <article class="card hero">
+        <div class="label">Marktdaten</div>
+        <div id="marketReady" class="big">–</div>
+        <div id="pair" class="muted">–</div>
+      </article>
+      <article class="card">
+        <div class="label">Chancen</div>
+        <div id="opps" class="big">0</div>
+        <div class="muted">aktuell hypothetisch</div>
+      </article>
+      <article class="card">
+        <div class="label">Transfer geprüft</div>
+        <div id="transfer" class="big">–</div>
+        <div class="muted">kein Trading nötig</div>
+      </article>
+      <article class="card">
+        <div class="label">Samples</div>
+        <div id="samples" class="big">0</div>
+        <div id="profitable" class="muted">0 profitabel</div>
+      </article>
+    </section>
+
+    <section class="card">
+      <div class="section-title">Beste aktuelle Möglichkeit</div>
+      <div id="best" class="empty">Noch keine passende Gelegenheit.</div>
+    </section>
+
+    <section class="card">
+      <div class="section-title">Sicherheit</div>
+      <div class="row"><span>Orders / Executor</span><strong id="executors">0</strong></div>
+      <div class="row"><span>Positionen</span><strong id="positions">0</strong></div>
+      <div class="row"><span>Kill-Switch</span><strong id="killState">AUS</strong></div>
+      <button id="killButton" class="danger">KILL-SWITCH AKTIVIEREN</button>
+      <p class="muted small">Die App kann den Kill-Switch nur einschalten. Sie kann Trading nicht freischalten.</p>
+    </section>
+
+    <section class="card">
+      <div class="section-title">Letzte Beobachtungen</div>
+      <div id="history" class="history"></div>
+    </section>
+
+    <footer id="updated">Warte auf Daten…</footer>
+    </div>
+  </main>
+  <script src="/app.js"></script>
+</body>
+</html>

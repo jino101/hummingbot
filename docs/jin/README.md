@@ -1,6 +1,25 @@
 # JIN Trading — Audit and implementation, 6 October 2026
 
-Base reviewed: `jino101/hummingbot`, commit `2bfaccc48dd49e71a5b6d9b3011808e127dd00cd`.
+Bases reviewed: `jino101/hummingbot` master `2bfaccc48dd49e71a5b6d9b3011808e127dd00cd`
+and the user's actual development branch `chatgpt/arbitrage-bot`, commit
+`2cb92e7aaf5b568d6b5ad25bc20a88fed1b95a7e`. The integrated change preserves the existing
+55-file trading/mobile/Android stack and supplements it, rather than replacing it.
+
+## Existing functionality confirmed
+
+The development branch already contains `jino_cross_exchange_arbitrage`, public
+observe and authenticated readonly/live gates, network compatibility and transfer
+estimates, one-leg recovery rules, JSONL history, a token-protected mobile dashboard,
+Android WebView source/APK workflow, shell launchers and targeted tests. These were
+absent from master and were initially missed in the first inventory. This final
+audit refers to the integrated development branch.
+
+Additional issues found in that branch: the base-asset rebalance direction was
+reversed (withdrawal must be from the buy venue; deposit to the sell venue), its
+fee estimate used the wrong venue, cached live readiness lacked an execution-time
+freshness check, and the mobile UI did not flag old snapshots or reject all failed
+HTTP responses. Direction/fee selection, stale-readiness blocking, stale UI status,
+HTML escaping and token comparison have now been corrected.
 This is a focused review of the execution path, controller, connector interfaces,
 CLI, Docker and project/test structure, not a security audit of every connector.
 
@@ -14,10 +33,10 @@ CLI, Docker and project/test structure, not a security audit of every connector.
 | Fee query passed the same asset as base and quote | Pass actual pair assets; validate gas conversion input | Account-specific fees still need validation |
 | Failed orders resubmitted the original full amount | Do not resubmit automatically; attempt cancellation, preserve known fills/order IDs; controller blocks after FAILED/POSITION_HOLD | A late fill or uncertain submission still requires reconciliation; this is not a complete hedge engine |
 | Status could return None instead of list | Always return a status list | No native runtime in this environment |
-| No project-level multi-bot paper ledger | Shared SQLite transactions, independent allocations totalling 5 USDT, deduplication and reinvestment | Controls affect only the JIN paper engine, not arbitrary Hummingbot instances |
+| No shared multi-bot portfolio ledger (existing limits are per controller) | Shared SQLite transactions, independent allocations totalling 5 USDT, deduplication and reinvestment | Controls affect only the JIN paper engine, not arbitrary Hummingbot instances |
 | No triangular monitor | Three-asset closed routes, depth walking, fees, rounding, minimum size/notional and stale-book rejection | No sequential live triangular execution |
-| No mobile control surface | Authenticated responsive dashboard, per-bot paper Start/Stop, shared Not-Aus, PnL, opportunities, exchange errors, CSV | No live-mode toggle or external bot administration |
-| No project deployment/replay checks | Docker restart/persistent volume, bounded recording rotation, snapshot replay, focused CI | Docker build and production deployment not verified here |
+| Existing dashboard lacks per-bot paper controls | Authenticated responsive dashboard, per-bot paper Start/Stop, shared Not-Aus, PnL, opportunities, exchange errors, CSV | Existing cross-exchange observation shown; no live-mode toggle or external bot administration |
+| Existing launchers/CI lack snapshot replay and shared paper deployment | Docker restart/persistent volume, bounded recording rotation, snapshot replay, focused CI | Docker build and production deployment not verified here |
 
 ## Run the working paper application
 
@@ -31,13 +50,19 @@ printf '%s\n' "$JIN_DASHBOARD_TOKEN"
 python -m jin_trading.server
 ```
 
-Open `http://127.0.0.1:8787` and enter your dashboard key. All bots start stopped
+Open `http://127.0.0.1:8788` and enter your dashboard key. All bots start stopped
 on the first launch. Public quotes are collected even while paper trading is stopped.
 The example allocates **virtual** 2.5 USDT to KuCoin and 2.5 USDT to Binance;
 it does not transfer or read your real 5 USDT on KuCoin. To put all paper capital
 on KuCoin, replace the `bots` object with one KuCoin bot with budget `"5"` **before
 creating the ledger**. Changing budgets after starting requires an explicit ledger
 migration; restarting never overwrites balances or resets an emergency latch.
+
+The existing dashboard remains on port 8787; this supplemental paper dashboard
+uses port 8788. It reads `data/jino_observe_latest.json` from the existing observer.
+Its Not-Aus also creates the existing controller runtime kill-switch file. Reset
+clears **only** the new paper latch; it never removes the existing controller kill
+switch or enables live trading. Use a shared data volume/directory to connect them.
 
 No API keys are needed for public REST snapshots. Symbols that are unavailable,
 whose rules cannot be interpreted, or whose minimums exceed the allocated amount
@@ -137,13 +162,13 @@ are absent. These tests supplement, not replace, native Hummingbot tests.
 
 Observed here:
 
-- 32 focused tests pass; approximately 90% line/branch coverage for `jin_trading`.
+- 36 new focused tests plus 32 existing pure/mobile tests pass; approximately 90% line/branch coverage for `jin_trading`.
 - Syntax compilation, JavaScript syntax validation and `git diff --check` pass.
 - Dashboard authentication/control endpoints pass HTTP integration tests. A visual
   mobile-browser test remains unverified: Chromium was absent and its download
   was blocked/truncated in this environment.
-- Native executor tests could not collect: `async_timeout` is absent; the compiled
-  engine and full environment have not been installed. Native tests were updated
+- Native executor/controller tests could not collect: the compiled
+  `connector_base` extension and `prompt_toolkit` are absent. Native tests were updated
   for the corrected PnL and new failure handling but their success is unverified.
 - Actual public-API probes: KuCoin timeout, Bitget timeout, Binance HTTP 451.
   Fixture-based parsing is tested; reachable real feeds still need a host test.
@@ -157,8 +182,10 @@ Observed here:
 2. Build live triangular execution with per-leg fills, residual-asset reconciliation,
    timeout/partial-fill recovery and integration tests. Connect real shared balances
    and open positions to global risk accounting before enabling multiple live bots.
-3. Add private account inventory and deposit/withdrawal/network/rebalancing checks
-   for cross-exchange execution. The generic executor fixes alone do not finish this.
+3. Validate the existing private account/network/readiness checks with real readonly
+   credentials, add Bitget support to those authenticated checks, and reconcile
+   inventories/rebalancing in live operation. The generic executor fixes alone do
+   not finish this.
 4. Connect existing Hummingbot market-making/directional strategies to the central
    supervisor. The dashboard currently runs multiple triangular PAPER bots; arbitrary
    live Hummingbot bots and scalping/market-making are not centrally controlled.

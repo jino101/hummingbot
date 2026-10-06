@@ -319,6 +319,15 @@ class SourceCatalogTest(unittest.TestCase):
 
 
 class DescribeStrategyTest(unittest.TestCase):
+    def test_jino_controller_scaffold_uses_paper_defaults(self):
+        data, required, _ = sc.describe_strategy("controller", "jino_cross_exchange_arbitrage")
+        self.assertEqual(data["controller_name"], "jino_cross_exchange_arbitrage")
+        self.assertEqual(data["rate_connector"], "binance_paper_trade")
+        self.assertEqual(data["exchange_pair_1"]["connector_name"], "binance_paper_trade")
+        self.assertEqual(data["exchange_pair_2"]["connector_name"], "kucoin_paper_trade")
+        self.assertEqual(data["safety_mode"], "paper")
+        self.assertEqual(required, [])
+
     def test_v2_script_uses_script_config_class(self):
         data, required, updatable = sc.describe_strategy("v2-script", "simple_pmm")
         self.assertEqual(data["script_file_name"], "simple_pmm.py")
@@ -357,6 +366,22 @@ class DescribeStrategyTest(unittest.TestCase):
 
 
 class ResolverErrorsTest(unittest.TestCase):
+    def test_controller_config_class_ignores_imported_base_config_classes(self):
+        cls = sc.controller_config_class({
+            "controller_type": "generic",
+            "controller_name": "jino_cross_exchange_arbitrage",
+        })
+        self.assertEqual(cls.__name__, "JinoCrossExchangeArbitrageConfig")
+        self.assertEqual(cls.model_fields["rate_connector"].default, "binance_paper_trade")
+        self.assertEqual(
+            cls.model_fields["exchange_pair_1"].default.connector_name,
+            "binance_paper_trade",
+        )
+        self.assertEqual(
+            cls.model_fields["exchange_pair_2"].default.connector_name,
+            "kucoin_paper_trade",
+        )
+
     def test_controller_config_class_requires_type_and_name(self):
         with self.assertRaises(ValueError):
             sc.controller_config_class({"controller_name": "x"})   # missing type

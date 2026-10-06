@@ -115,8 +115,12 @@ class ControllerConfigBase(BaseClientModel):
         try:
             module = importlib.import_module(self.__module__)
             base_classes = ["ControllerBase", "MarketMakingControllerBase", "DirectionalTradingControllerBase"]
+            module_name = getattr(module, "__name__", None)
             for name, obj in inspect.getmembers(module):
-                if inspect.isclass(obj) and issubclass(obj, ControllerBase) and obj.__name__ not in base_classes:
+                if (inspect.isclass(obj)
+                        and obj.__module__ == module_name
+                        and issubclass(obj, ControllerBase)
+                        and obj.__name__ not in base_classes):
                     return obj
         except ImportError as e:
             raise ImportError(f"Could not import the module: {self.__module__}. Error: {str(e)}")

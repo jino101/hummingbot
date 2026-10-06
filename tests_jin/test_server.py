@@ -52,3 +52,16 @@ class ServerTests(unittest.TestCase):
 
     def test_short_token_rejected(self):
         with self.assertRaises(ValueError):make_server(self.store,'weak',port=0)
+
+    def test_existing_snapshot_and_emergency_bridge(self):
+        observation=Path(self.tmp.name)/'observation.json'
+        kill=Path(self.tmp.name)/'runtime.kill'
+        self.server.observation_path=observation
+        self.server.kill_switch_path=kill
+        with self.request('/api/existing/status') as response:self.assertFalse(json.load(response)['available'])
+        observation.write_text('{"timestamp": 1, "mode":"observe"}')
+        with self.request('/api/existing/status') as response:self.assertTrue(json.load(response)['stale'])
+        observation.write_text('broken')
+        with self.request('/api/existing/status') as response:self.assertFalse(json.load(response)['available'])
+        with self.request('/api/halt','POST') as response:self.assertTrue(kill.exists())
+        with self.request('/api/reset','POST') as response:self.assertTrue(kill.exists())

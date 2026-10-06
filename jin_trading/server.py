@@ -50,6 +50,20 @@ class Handler(BaseHTTPRequestHandler):
             return
         if self.path == '/api/state':
             self.send(200, self.server.store.snapshot())
+        elif self.path == '/api/existing/status':
+            path = self.server.observation_path
+            if not path or not path.is_file():
+                self.send(200, {'available': False})
+                return
+            try:
+                import time
+                if path.stat().st_size > 1_000_000:
+                    raise ValueError('Observation snapshot too large')
+                observation = json.loads(path.read_text())
+                age = time.time() - float(observation.get('timestamp', 0))
+                self.send(200, {'available': True, 'stale': not 0 <= age <= 60, 'observation': observation})
+            except (ValueError, OSError, TypeError) as exc:
+                self.send(200, {'available': False, 'error': str(exc)})
         elif self.path == '/api/trades.csv':
             out = io.StringIO()
             fields = ['id', 'bot', 'timestamp', 'input', 'output', 'route']
@@ -72,6 +86,9 @@ class Handler(BaseHTTPRequestHandler):
                 raise ValueError('This API accepts no request body')
             if self.path == '/api/halt':
                 self.server.store.emergency()
+                if self.server.kill_switch_path:
+                    self.server.kill_switch_path.parent.mkdir(parents=True, exist_ok=True)
+                    self.server.kill_switch_path.touch()
             elif self.path == '/api/reset':
                 self.server.store.reset()
             else:
@@ -85,11 +102,13 @@ class Handler(BaseHTTPRequestHandler):
             self.send(400, {'error': str(exc)})
 
 
-def make_server(store, token, host='127.0.0.1', port=8787):
+def make_server(store, token, host='127.0.0.1', port=8788, observation_path=None, kill_switch_path=None):
     if len(token) < 24:
         raise ValueError('JIN_DASHBOARD_TOKEN must contain at least 24 characters')
     server = ThreadingHTTPServer((host, port), Handler)
     server.store, server.token = store, token
+    server.observation_path = Path(observation_path) if observation_path else None
+    server.kill_switch_path = Path(kill_switch_path) if kill_switch_path else None
     server.daemon_threads = True
     return server
 
@@ -99,7 +118,7 @@ def main():
     parser.add_argument('--config', default='jin_trading/config.example.json')
     parser.add_argument('--db', default='data/jin-paper.sqlite')
     parser.add_argument('--host', default='127.0.0.1')
-    parser.add_argument('--port', type=int, default=8787)
+    parser.add_argument('--port', type=int, default=8788)
     parser.add_argument('--no-worker', action='store_true', help='Serve existing ledger only')
     args = parser.parse_args()
     config = load_config(args.config)
@@ -109,7 +128,8 @@ def main():
     Path(args.db).parent.mkdir(parents=True, exist_ok=True)
     store = Store(args.db)
     store.configure({bot: spec['budget'] for bot, spec in config['bots'].items()})
-    server = make_server(store, token, args.host, args.port)
+    server = make_server(store, token, args.host, args.port,
+                         config.get("existing_observation_path"), config.get("existing_kill_switch_path"))
     worker = Worker(store, config)
     if not args.no_worker:
         threading.Thread(target=worker.run, daemon=True).start()

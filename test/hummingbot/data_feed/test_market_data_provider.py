@@ -40,6 +40,33 @@ class TestMarketDataProvider(IsolatedAsyncioWrapperTestCase):
         with self.assertRaises(ValueError):
             self.provider.get_non_trading_connector("binance_invalid")
 
+    @patch("hummingbot.data_feed.market_data_provider.get_connector_class")
+    @patch.object(MarketDataProvider, "get_connector_config_map")
+    def test_paper_trade_rate_source_uses_public_base_connector(self, mock_config_map, mock_get_connector_class):
+        mock_config_map.return_value = {"api_key": "", "secret_key": ""}
+        mock_connector_class = MagicMock()
+        mock_get_connector_class.return_value = mock_connector_class
+
+        connector = self.provider.get_non_trading_connector("kucoin_paper_trade")
+
+        self.assertIs(connector, mock_connector_class.return_value)
+        mock_get_connector_class.assert_called_once_with("kucoin")
+        mock_config_map.assert_called_once_with("kucoin")
+        self.assertFalse(mock_connector_class.call_args.kwargs["trading_required"])
+
+    @patch("hummingbot.data_feed.market_data_provider.get_connector_class")
+    @patch.object(MarketDataProvider, "get_connector_config_map")
+    def test_regular_rate_source_keeps_original_connector_name(self, mock_config_map, mock_get_connector_class):
+        mock_config_map.return_value = {"api_key": "", "secret_key": ""}
+        mock_connector_class = MagicMock()
+        mock_get_connector_class.return_value = mock_connector_class
+
+        connector = self.provider.get_non_trading_connector("binance")
+
+        self.assertIs(connector, mock_connector_class.return_value)
+        mock_get_connector_class.assert_called_once_with("binance")
+        mock_config_map.assert_called_once_with("binance")
+
     def test_non_trading_connector_caching(self):
         # Test that non-trading connectors are cached and reused
         connector1 = self.provider.get_non_trading_connector("binance")

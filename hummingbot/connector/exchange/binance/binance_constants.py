@@ -27,6 +27,9 @@ SERVER_TIME_PATH_URL = "/time"
 ACCOUNTS_PATH_URL = "/account"
 MY_TRADES_PATH_URL = "/myTrades"
 ORDER_PATH_URL = "/order"
+# Wallet/account endpoints used only by Jino's fail-closed live-readiness probe.
+CAPITAL_CONFIG_PATH_URL = "/sapi/v1/capital/config/getall"
+API_RESTRICTIONS_PATH_URL = "/sapi/v1/account/apiRestrictions"
 WS_HEARTBEAT_TIME_INTERVAL = 30
 
 # Binance params
@@ -106,6 +109,12 @@ RATE_LIMITS = [
               linked_limits=[LinkedLimitWeightPair(REQUEST_WEIGHT, 4),
                              LinkedLimitWeightPair(ORDERS, 1),
                              LinkedLimitWeightPair(ORDERS_24HR, 1),
+                             LinkedLimitWeightPair(RAW_REQUESTS, 1)]),
+    RateLimit(limit_id=CAPITAL_CONFIG_PATH_URL, limit=MAX_REQUEST, time_interval=ONE_MINUTE,
+              linked_limits=[LinkedLimitWeightPair(REQUEST_WEIGHT, 10),
+                             LinkedLimitWeightPair(RAW_REQUESTS, 1)]),
+    RateLimit(limit_id=API_RESTRICTIONS_PATH_URL, limit=MAX_REQUEST, time_interval=ONE_MINUTE,
+              linked_limits=[LinkedLimitWeightPair(REQUEST_WEIGHT, 1),
                              LinkedLimitWeightPair(RAW_REQUESTS, 1)])
 ]
 

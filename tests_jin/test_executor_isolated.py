@@ -14,6 +14,8 @@ from types import SimpleNamespace
 from typing import Dict, Union
 from unittest.mock import AsyncMock, MagicMock, Mock
 
+from hummingbot.jino_arbitrage.recovery import LegStatus, RecoveryAction, decide_one_leg_recovery
+
 
 class Harness:
     def __init__(self, strategy, connectors, config, **kwargs):
@@ -39,6 +41,8 @@ class Harness:
 
 
 class Tracked:
+    @property
+    def executed_amount_base(self):return self.order.executed_amount_base if self.order else D("0")
     def __init__(self):self.order_id=None;self.order=None;self.cum_fees_quote=D('0');self.average_executed_price=D('0')
 
 
@@ -50,7 +54,10 @@ def load_executor():
     namespace=dict(Decimal=D,asyncio=asyncio,logging=logging,Dict=Dict,Union=Union,ExecutorBase=Harness,
         TrackedOrder=Tracked,CloseType=close,HummingbotLogger=logging.Logger,StrategyV2Base=object,
         ArbitrageExecutorConfig=object,BuyOrderCreatedEvent=object,SellOrderCreatedEvent=object,
-        MarketOrderFailureEvent=object,RateOracle=SimpleNamespace(get_instance=lambda:Mock()),
+        MarketOrderFailureEvent=object,InFlightOrder=object,OrderFilledEvent=object,OrderCancelledEvent=object,
+        BuyOrderCompletedEvent=object,SellOrderCompletedEvent=object,LegStatus=LegStatus,
+        RecoveryAction=RecoveryAction,decide_one_leg_recovery=decide_one_leg_recovery,
+        RateOracle=SimpleNamespace(get_instance=lambda:Mock()),
         RunnableStatus=SimpleNamespace(RUNNING='RUNNING',SHUTTING_DOWN='SHUTTING_DOWN'),
         split_hb_trading_pair=lambda pair:pair.split('-'),OrderType=SimpleNamespace(MARKET='MARKET'),
         TradeType=SimpleNamespace(BUY='BUY',SELL='SELL'))
@@ -112,3 +119,12 @@ class ExecutorRegressionTests(unittest.IsolatedAsyncioTestCase):
     def test_missing_status_returns_list(self):
         self.executor._last_buy_price=D('0')
         self.assertIsInstance(self.executor.to_format_status(),list)
+
+    def test_existing_one_leg_recovery_preserves_known_fills(self):
+        ex=self.executor;ex.config.one_leg_recovery_enabled=True;ex.config.auto_hedge_enabled=False
+        ex.buy_order.order_id="buy";ex.sell_order.order_id="sell"
+        ex.buy_order.order=SimpleNamespace(executed_amount_base=D("0.4"),is_filled=False,is_done=False,
+                                         to_json=lambda:{"id":"buy","filled":"0.4"})
+        ex.process_order_failed_event(None,None,SimpleNamespace(order_id="sell"))
+        self.assertEqual(ex.close_type,"POSITION_HOLD")
+        self.assertEqual(ex._held_position_orders[0]["filled"],"0.4")

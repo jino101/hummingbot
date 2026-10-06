@@ -1,9 +1,9 @@
 name: JIN paper trading checks
 on:
   push:
-    paths: ['jin_trading/**', 'tests_jin/**', 'scripts/jin_arbitrage_monitor.py', 'hummingbot/strategy_v2/executors/arbitrage_executor/**', 'controllers/generic/arbitrage_controller.py', '.github/workflows/jin-checks.yml']
+    paths: ['jin_trading/**', 'tests_jin/**', 'scripts/jin_arbitrage_monitor.py', 'hummingbot/strategy_v2/executors/arbitrage_executor/**', 'controllers/generic/arbitrage_controller.py', 'controllers/generic/jino_cross_exchange_arbitrage.py', 'hummingbot/jino_arbitrage/**', 'jino_mobile/**', '.github/workflows/jin-checks.yml']
   pull_request:
-    paths: ['jin_trading/**', 'tests_jin/**', 'scripts/jin_arbitrage_monitor.py', 'hummingbot/strategy_v2/executors/arbitrage_executor/**', 'controllers/generic/arbitrage_controller.py', '.github/workflows/jin-checks.yml']
+    paths: ['jin_trading/**', 'tests_jin/**', 'scripts/jin_arbitrage_monitor.py', 'hummingbot/strategy_v2/executors/arbitrage_executor/**', 'controllers/generic/arbitrage_controller.py', 'controllers/generic/jino_cross_exchange_arbitrage.py', 'hummingbot/jino_arbitrage/**', 'jino_mobile/**', '.github/workflows/jin-checks.yml']
 permissions:
   contents: read
 jobs:
@@ -15,7 +15,8 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
-      - run: python -m pip install coverage==7.16.2
+      - run: python -m pip install coverage==7.16.2 pytest==9.1.1 pytest-asyncio==1.4.0 pytest-timeout==2.4.0
       - run: python -m compileall -q jin_trading scripts/jin_arbitrage_monitor.py controllers/generic/arbitrage_controller.py hummingbot/strategy_v2/executors/arbitrage_executor/arbitrage_executor.py
       - run: python -m coverage run --rcfile=/dev/null --branch --source=jin_trading -m unittest discover -s tests_jin
       - run: python -m coverage report --rcfile=/dev/null --fail-under=80
+      - run: python -m pytest -q test/hummingbot/jino_arbitrage/test_opportunity.py test/hummingbot/jino_arbitrage/test_scanner.py test/hummingbot/jino_arbitrage/test_live_checks.py test/hummingbot/jino_arbitrage/test_recovery.py test/hummingbot/jino_arbitrage/test_observation_store.py test/jino_mobile/test_server.py

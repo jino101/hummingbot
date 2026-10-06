@@ -1,6 +1,8 @@
 {
   "mode": "paper",
   "poll_seconds": 5,
+  "existing_observation_path": "data/jino_observe_latest.json",
+  "existing_kill_switch_path": "data/jino_kill_switch",
   "max_age": 3,
   "min_profit": "0.0035",
   "slippage": "0.001",

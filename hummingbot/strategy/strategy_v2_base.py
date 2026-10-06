@@ -111,11 +111,14 @@ class StrategyV2ConfigBase(BaseClientModel):
             module_path = f"{settings.CONTROLLERS_MODULE}.{controller_type}.{controller_name}"
             module = importlib.import_module(module_path)
 
+            module_name = getattr(module, "__name__", None)
             config_class = next((member for member_name, member in inspect.getmembers(module)
-                                 if inspect.isclass(member) and member not in [ControllerConfigBase,
-                                                                               MarketMakingControllerConfigBase,
-                                                                               DirectionalTradingControllerConfigBase]
-                                 and (issubclass(member, ControllerConfigBase))), None)
+                                 if inspect.isclass(member)
+                                 and member.__module__ == module_name
+                                 and member not in [ControllerConfigBase,
+                                                    MarketMakingControllerConfigBase,
+                                                    DirectionalTradingControllerConfigBase]
+                                 and issubclass(member, ControllerConfigBase)), None)
             if not config_class:
                 raise InvalidController(f"No configuration class found in the module {controller_name}.")
 

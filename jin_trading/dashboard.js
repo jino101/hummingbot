@@ -37,8 +37,14 @@ function render(state) {
   el('trades').replaceChildren();
   for(const trade of state.trades) {const row=textNode('tr','');for(const key of ['bot','input','output']) row.append(textNode('td',trade[key]));el('trades').append(row);}
 }
-async function refresh() {try{render(await api('/api/state'));el('error').textContent='';}catch(e){el('error').textContent=e.message;}}
+async function refresh() {try{
+  const [state, existing]=await Promise.all([api('/api/state'),api('/api/existing/status')]);
+  render(state);
+  const o=existing.observation || {};
+  el('existing').textContent=existing.available ? 'Beobachtungsmodus: '+o.mode+' · '+o.exchange_1+' / '+o.exchange_2+' · '+(existing.stale?'Daten veraltet':'Daten aktuell')+' · Runtime-Not-Aus: '+(o.runtime_kill_switch?'AN':'AUS')+' · Chancen: '+(o.opportunities || []).length : 'Kein vorhandener Beobachtungsprozess / keine lesbare Datei';
+  el('error').textContent='';
+}catch(e){el('error').textContent=e.message;}}
 el('login').onsubmit=async event=>{event.preventDefault();token=el('token').value;await refresh();if(!el('panel').hidden){el('token').value='';clearInterval(timer);timer=setInterval(refresh,5000);}};
 el('halt').onclick=()=>action('/api/halt');
-el('reset').onclick=()=>{if(confirm('Not-Aus nach Prüfung zurücksetzen? Bots bleiben gestoppt.'))action('/api/reset');};
+el('reset').onclick=()=>{if(confirm('Nur die Paper-Sperre zurücksetzen? Der Runtime-Not-Aus des bestehenden Bots bleibt gesetzt.'))action('/api/reset');};
 el('export').onclick=async()=>{try{const r=await fetch('/api/trades.csv',{headers:{Authorization:'Bearer '+token}});if(!r.ok)throw new Error('Export fehlgeschlagen');const url=URL.createObjectURL(await r.blob());const a=document.createElement('a');a.href=url;a.download='jin-paper-trades.csv';a.click();URL.revokeObjectURL(url);}catch(e){el('error').textContent=e.message;}};
