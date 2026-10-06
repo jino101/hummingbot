@@ -37,14 +37,38 @@ class FeedTests(unittest.TestCase):
         self.assertEqual(book.max_size,D('100'))
         self.assertEqual(book.min_notional,D('5'))
 
-    def test_bitget_parse_and_non_usdt_fail_closed(self):
+    def test_bitget_parse_and_non_usdt_quote_conversion(self):
+        now=str(int(time.time()*1000))
         def fetch(url):
-            data=([{'symbol':'AUSDT','baseCoin':'A','quoteCoin':'USDT','status':'online','quantityPrecision':'2','minTradeAmount':'0.01','minTradeUSDT':'1','maxTradeAmount':'1000'}]
-                  if 'symbols' in url else {'ts':str(int(time.time()*1000)),'bids':[['1','100']],'asks':[['1.01','100']]})
+            if '/api/v2/spot/public/symbols' in url:
+                data=[
+                    {'symbol':'AUSDT','baseCoin':'A','quoteCoin':'USDT','status':'online','quantityPrecision':'2','minTradeAmount':'0.01','minTradeUSDT':'1','maxTradeAmount':'1000'},
+                    {'symbol':'ABTC','baseCoin':'A','quoteCoin':'BTC','status':'online','quantityPrecision':'3','minTradeAmount':'0.001','minTradeUSDT':'5','maxTradeAmount':'100'}
+                ]
+            elif '/api/v3/market/tickers' in url:
+                data=[{'symbol':'BTCUSDT','lastPrice':'50000'}]
+            else:
+                data={'ts':now,'bids':[['0.001','100']],'asks':[['0.0011','100']]}
             return {'code':'00000','data':data}
         feed=PublicFeed('bitget','0.002',fetch)
-        self.assertEqual(feed.book('A-USDT').step,D('0.01'))
-        with self.assertRaises(ValueError):feed.book('A-BTC')
+        usdt=feed.book('A-USDT')
+        btc=feed.book('A-BTC')
+        self.assertEqual(usdt.step,D('0.01'))
+        self.assertEqual(btc.step,D('0.001'))
+        self.assertEqual(btc.min_notional,D('0.0001'))
+
+    def test_bitget_non_usdt_without_conversion_fails_closed(self):
+        def fetch(url):
+            if '/api/v2/spot/public/symbols' in url:
+                data=[{'symbol':'AABC','baseCoin':'A','quoteCoin':'ABC','status':'online','quantityPrecision':'2','minTradeAmount':'0.01','minTradeUSDT':'1','maxTradeAmount':'1000'}]
+            elif '/api/v3/market/tickers' in url:
+                data=[]
+            else:
+                data={'ts':str(int(time.time()*1000)),'bids':[['1','100']],'asks':[['1.01','100']]}
+            return {'code':'00000','data':data}
+        feed=PublicFeed('bitget','0.002',fetch)
+        self.assertEqual(feed.pairs(),())
+        with self.assertRaises(ValueError):feed.book('A-ABC')
 
     def test_api_errors(self):
         for ex,code in [('kucoin','400000'),('bitget','40000'),('binance',-1)]:
