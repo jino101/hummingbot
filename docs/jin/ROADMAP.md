@@ -6,7 +6,8 @@ auf `chatgpt/arbitrage-bot`. Kein Live-Betrieb durch den neuen Paper-Dienst.
 ## Bereits umgesetzt
 
 - Automatische Erkennung aller unterstützten aktiven USDT-Märkte und kompletter
-  USDT-Dreieckswege auf KuCoin/Binance; Bitget derzeit nur USDT-Märkte.
+  USDT-Dreieckswege auf KuCoin/Binance. Bitget unterstützt zusätzlich konservativ
+  bewertete Nicht-USDT-Quote-Märkte, sofern ein eindeutiger USDT-Referenzkurs vorliegt.
 - Kein festes Coin-Limit; faire REST-Rotation mit vollständigen Dreiecksgruppen,
   Anfrageabständen, HTTP-Cooldown und Anzeige der tatsächlichen Abdeckung.
 - Paper-Bots, gemeinsame virtuelle 5 USDT, Reinvestition, 10-%-Tagesverlustsperre,
@@ -24,7 +25,7 @@ auf `chatgpt/arbitrage-bot`. Kein Live-Betrieb durch den neuen Paper-Dienst.
 | P0 | 5-USDT-Machbarkeitsprüfung | Tatsächliche KuCoin-Gebühren, Mindestmengen, Guthaben und erreichbare Routen ergeben einen dokumentierten Bericht | Börsenkonto lokal verbinden, keine Schlüssel im Chat |
 | P1 | Vollständige Transferprüfung | Gemeinsame Tokenidentität, Netzwerke, Aus-/Einzahlungssperren, Gebühren und Kapitalverteilung geprüft | Authentifizierte Kontodaten, wo erforderlich |
 | P1 | Große WebSocket-Abdeckung | Automatische Subscription-Shards, Reconnect, Snapshot/Diff-Abgleich und messbare Vollumlaufzeiten | Native Connector-Integration |
-| P1 | Bitget-Dreieckswege | Nicht-USDT-Regeln korrekt umgerechnet; Grenzen und Fees mit Fixtures und API geprüft | Zusätzliche Regel- und Bewertungslogik |
+| P1 | Bitget-Dreieckswege | **Softwareteil umgesetzt:** Nicht-USDT-Mindestwerte werden über einen aktuellen USDT-Referenzkurs in Quote-Einheiten umgerechnet; fehlende Umrechnung bleibt fail-closed. Offen: reale API-/Fixture-Prüfung und persönliche Fee-Tiers. | Erreichbare Bitget-API / Kontodaten für finale Validierung |
 | P1 | Live-Dreiecks-Executor | Jede Teilfüllung, Zeitüberschreitung, späte Füllung und jeder Neustart reconciliert; sichere Restmengenbehandlung getestet | Zustandsmaschine und Börsensandbox |
 | P1 | Gemeinsame reale Mehrbot-Steuerung | Portfoliorisiko über alle Prozesse/Konten; reserviertes Kapital; zentraler Order-Stopp und Orderabgleich | Authentifizierte Supervisor-Anbindung |
 | P2 | Wachstumsstufen | Konfigurierbare Kapitalstufen und Einsatzgrößen; Tageslimit bleibt kontoweit; Replay validiert | Abstimmung der Stufen ohne Gewinnversprechen |
