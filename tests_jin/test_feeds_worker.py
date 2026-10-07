@@ -116,6 +116,22 @@ class WorkerTests(unittest.TestCase):
         self.assertEqual(len(state['trades']),0)
         self.assertEqual(len(state['bots'][0]['status']['errors']),3)
 
+    def test_held_inventory_is_refreshed_outside_the_rotating_batch(self):
+        from test_arbitrage import book
+        self.worker.brokers['kucoin-triangle'].books.update({b.pair:b for b in triangle()})
+        self.worker.engine.directional('kucoin-triangle','kucoin-triangle','A-USDT','buy',D('1'))
+        self.config['pairs']=['C-USDT']
+        called=[]
+        for exchange,feed in self.worker.feeds.items():
+            def quote(pair,exchange=exchange):
+                called.append((exchange,pair))
+                return book(pair,'.99','1',exchange=exchange)
+            feed.book=quote
+        self.worker.tick()
+        self.assertIn(('kucoin','A-USDT'),called)
+        self.assertEqual(self.worker.required_pairs('kucoin'),('A-USDT',))
+        self.assertTrue(self.worker.portfolio.snapshot()['ready'])
+
     def test_config_rejects_live_and_unbounded_risk(self):
         for key,value in [('mode','live'),('poll_seconds',0),('slippage','0'),('min_profit','-1'),('max_age',0),('pairs',[]),('stress_fraction','0'),('max_deploy_fraction','1')]:
             config=dict(self.config);config[key]=value

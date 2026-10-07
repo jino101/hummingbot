@@ -79,6 +79,18 @@ class Worker:
         self.signals={bot:Signals(spec['strategy'],**spec.get('signal',{})) for bot,spec in config['bots'].items()
                       if spec.get('strategy') in STRATEGIES[2:]}
 
+    def required_pairs(self, exchange):
+        """Keep position valuations and configured signal markets in every cycle."""
+        pairs=set()
+        for bot,spec in self.config['bots'].items():
+            if spec['exchange']!=exchange:continue
+            if spec.get('pair'):pairs.add(spec['pair'])
+            broker=self.brokers.get(bot)
+            if isinstance(broker,PaperBroker):
+                pairs.update(asset+'-USDT' for asset,amount in broker.balances().items()
+                             if asset!='USDT' and amount>0)
+        return tuple(sorted(pairs))
+
     def tick(self):
         books, errors = [], []
         venue_pairs = {}
@@ -106,7 +118,8 @@ class Worker:
         # One task per exchange: refresh rules once; pairs sequentially avoid a rule-cache race.
         queue=Queue()
         def collect(feed):
-            for pair in selected:
+            priorities=self.required_pairs(feed.exchange)
+            for pair in dict.fromkeys((*priorities,*selected)):
                 if venue_pairs and pair not in venue_pairs.get(feed.exchange, ()):
                     continue
                 try:
@@ -117,6 +130,7 @@ class Worker:
                     break
             queue.put(('done',feed.exchange))
         with ThreadPoolExecutor(max_workers=len(self.feeds)) as pool:
+            self.universe_status['valuation_priority_pairs']={name:self.required_pairs(name) for name in self.feeds}
             futures=[pool.submit(collect, f) for f in self.feeds.values()]
             done=0
             while done<len(futures):

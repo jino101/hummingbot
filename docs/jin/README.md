@@ -74,7 +74,10 @@ python -m jin_trading.server --feed websocket
 ```
 
 CCXT ist auf 4.5.85 festgelegt. Automatische Subscription-Gruppen rotieren;
-Reconnects und unveränderte Sequenzen erneuern keine alten Kurse. Ein 24-Stunden-
+gehaltene Bestände und konfigurierte Signal-Märkte werden priorisiert, und der
+Katalog wird alle 15 Minuten neu geladen. Höchstens 20 Subscriptions pro Börse;
+zu viele Bestandsmärkte blockieren frische Gesamtbewertung statt sie zu erfinden.
+Reconnects, Neuabonnements und unveränderte Sequenzen erneuern keine alten Kurse. Ein 24-Stunden-
 Börsentest ist noch durchzuführen. REST hat mindestens 250 ms Abstand pro Anbieter
 und Cooldown bei HTTP 418/429/451. Fehlende oder ungültige Marktregeln werden
 übersprungen. Bitget-Quote-Umrechnungen müssen frisch sein.

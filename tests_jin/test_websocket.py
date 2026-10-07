@@ -42,6 +42,9 @@ class WebSocketTests(unittest.IsolatedAsyncioTestCase):
         await self.runner.watch('kucoin','A-USDT')
         self.assertEqual(self.runner.queue.qsize(),1)
         self.client.un_watch_order_book.assert_awaited_once()
+        self.worker.stop.clear();self.client.watch_order_book.reset_mock()
+        await self.runner.watch('kucoin','A-USDT')
+        self.assertEqual(self.runner.queue.qsize(),1,'Resubscription cannot renew an unchanged book')
 
     async def test_consumer_executes_complete_triangle_and_closes_clients(self):
         self.worker.store.control('bot',True)
@@ -66,3 +69,11 @@ class WebSocketTests(unittest.IsolatedAsyncioTestCase):
         await self.runner.run()
         self.assertIn('No supported',self.worker.store.snapshot()['bots'][0]['status']['errors'][0])
         self.client.close.assert_awaited_once()
+
+    async def test_catalogue_refresh_includes_new_market_and_reloads_client_rules(self):
+        before=await self.runner.discover()
+        self.feed.rules['C-USDT']=self.feed.rules['A-USDT']
+        after=await self.runner.discover()
+        self.assertNotIn('C-USDT',before['kucoin'])
+        self.assertIn('C-USDT',after['kucoin'])
+        self.assertEqual(self.client.load_markets.await_count,2)
