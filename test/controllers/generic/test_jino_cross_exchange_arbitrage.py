@@ -220,7 +220,7 @@ def test_live_mode_blocks_until_readiness_is_verified():
     assert controller.determine_executor_actions() == []
 
 
-def test_live_mode_allows_executor_only_after_readiness_passes():
+def test_legacy_live_mode_remains_blocked_without_durable_execution():
     controller = make_controller(live_config())
     controller.market_data_provider.quantize_order_amount.return_value = Decimal("0.0001")
     controller.processed_data["live_readiness"] = {
@@ -232,9 +232,7 @@ def test_live_mode_allows_executor_only_after_readiness_passes():
 
     actions = controller.determine_executor_actions()
 
-    assert len(actions) == 2
-    assert all(action.executor_config.one_leg_recovery_enabled for action in actions)
-    assert all(not action.executor_config.auto_hedge_enabled for action in actions)
+    assert actions == []
 
 
 def test_live_mode_blocks_on_failed_readiness_reason():

@@ -1,0 +1,2 @@
+# Optional only; the default paper server needs no third-party Python packages.
+ccxt==4.5.85

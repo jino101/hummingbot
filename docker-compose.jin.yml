@@ -23,5 +23,10 @@ services:
       options:
         max-size: "10m"
         max-file: "3"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8788/healthz',timeout=3)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
 volumes:
   jin-paper-data:

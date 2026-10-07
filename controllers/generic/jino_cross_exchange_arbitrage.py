@@ -6,7 +6,7 @@ from pydantic import Field, field_validator, model_validator
 
 from controllers.generic.arbitrage_controller import ArbitrageController, ArbitrageControllerConfig
 from hummingbot.strategy_v2.executors.data_types import ConnectorPair
-from hummingbot.strategy_v2.models.executor_actions import ExecutorAction
+from hummingbot.strategy_v2.models.executor_actions import ExecutorAction, StopExecutorAction
 from hummingbot.jino_arbitrage.live_checks import collect_live_readiness, collect_observation_readiness
 from hummingbot.jino_arbitrage.observation_store import persist_observation_snapshot
 from hummingbot.jino_arbitrage.runtime_scanner import scan_provider_pair_for_quote_amount
@@ -370,19 +370,29 @@ class JinoCrossExchangeArbitrageController(ArbitrageController):
         return ""
 
     def determine_executor_actions(self) -> List[ExecutorAction]:
+        def stops():
+            return [StopExecutorAction(controller_id=self.config.id,executor_id=e.id,keep_position=True)
+                    for e in self.executors_info if e.is_active]
         if self.config.safety_mode in {"observe", "readonly"}:
             # Hard no-trade modes: analysis is allowed, executor/order creation is not.
-            return []
+            return stops()
 
         live_reason = self._live_readiness_gate_reason()
         if live_reason:
             self.logger().warning(f"Jino arbitrage live gate: {live_reason}. No executor will be created.")
-            return []
+            return stops()
+
+        if self.config.safety_mode=='live':
+            # Native legacy executors do not share the durable account journal.
+            # Live orders use jin_trading.live_once until the native recovery
+            # path has equivalent restart and late-fill reconciliation.
+            self.logger().warning('Legacy live controller is blocked; use the shared journal execution engine')
+            return stops()
 
         reason = self._risk_gate_reason()
         if reason:
             self.logger().warning(f"Jino arbitrage safety gate: {reason}. No new executor will be created.")
-            return []
+            return stops()
 
         actions = super().determine_executor_actions()
         if self.config.paper_test_force_execution and actions:

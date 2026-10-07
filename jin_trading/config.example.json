@@ -1,5 +1,6 @@
 {
   "mode": "paper",
+  "allowed_origins": ["https://jin-arbitrage-bot.jinoandjelkovic.chatgpt.site"],
   "poll_seconds": 5,
   "existing_observation_path": "data/jino_observe_latest.json",
   "existing_kill_switch_path": "data/jino_kill_switch",

@@ -73,6 +73,16 @@ class Store:
             raise ValueError('Paper budgets must be positive and total at most 1,000,000 USDT')
         with self.connect() as db:
             db.execute('BEGIN IMMEDIATE')
+            existing={r[0] for r in db.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+            if 'portfolio_settings' in existing:
+                mode=db.execute("SELECT value FROM portfolio_settings WHERE key='mode'").fetchone()
+                if not mode or mode[0]!='paper':raise ValueError('Budget reset is restricted to PAPER databases')
+                if db.execute("SELECT 1 FROM portfolio_runs WHERE state!='completed' LIMIT 1").fetchone():
+                    raise ValueError('Reconcile unsettled paper runs before resetting budgets')
+                db.execute('DELETE FROM portfolio_accounts')
+                db.execute("DELETE FROM portfolio_settings WHERE key!='mode'")
+                for table in ('paper_wallets','paper_positions'):
+                    if table in existing:db.execute('DELETE FROM '+table)
             db.execute('DELETE FROM trades')
             db.execute('DELETE FROM bots')
             for bot, budget in parsed.items():
@@ -97,13 +107,17 @@ class Store:
         return self._get(db, 'halt') == '1'
 
     def control(self, bot, enabled):
+        blocked = False
         with self.connect() as db:
             db.execute('BEGIN IMMEDIATE')
             if enabled and self._risk(db, time.time()):
-                raise ValueError('Emergency latch active; review before resetting')
-            result = db.execute('UPDATE bots SET enabled=? WHERE id=?', (int(enabled), bot))
-            if not result.rowcount:
-                raise ValueError('Unknown bot')
+                blocked = True
+            else:
+                result = db.execute('UPDATE bots SET enabled=? WHERE id=?', (int(enabled), bot))
+                if not result.rowcount:
+                    raise ValueError('Unknown bot')
+        if blocked:
+            raise ValueError('Emergency latch active; review before resetting')
 
     def emergency(self):
         with self.connect() as db:
@@ -112,19 +126,41 @@ class Store:
             db.execute('UPDATE bots SET enabled=0')
 
     def reset(self):
+        blocked = False
         with self.connect() as db:
             db.execute('BEGIN IMMEDIATE')
             self._risk(db, time.time())
             baseline = number(self._get(db, 'baseline'))
             if self._total(db) <= baseline * Decimal('0.90'):
-                raise ValueError('Daily loss threshold still breached')
-            self._setting(db, 'halt', '0')
-            self._setting(db, 'reason', '')
+                blocked = True
+            else:
+                self._setting(db, 'halt', '0')
+                self._setting(db, 'reason', '')
+        if blocked:
+            raise ValueError('Daily loss threshold still breached')
+
+    def trades(self):
+        """Stream the complete export without the dashboard's 100-row limit."""
+        with self.connect() as db:
+            for row in db.execute('SELECT * FROM trades ORDER BY id'):
+                yield dict(row)
 
     def publish(self, bot, status):
         with self.connect() as db:
             db.execute('UPDATE bots SET status=?, updated=? WHERE id=?',
                        (json.dumps(status, default=str, allow_nan=False), time.time(), bot))
+
+    def mark_equity(self, bot, equity):
+        """Capital follows the durable wallet, including marked held inventory."""
+        with self.connect() as db:
+            db.execute('BEGIN IMMEDIATE')
+            db.execute('UPDATE bots SET capital=? WHERE id=?',(str(number(equity)),bot))
+            self._risk(db,time.time())
+
+    def record_execution(self, bot, opportunity, result):
+        with self.connect() as db:
+            db.execute('INSERT OR IGNORE INTO trades(bot,timestamp,sequence,input,output,route) VALUES (?,?,?,?,?,?)',
+                       (bot,time.time(),opportunity.sequence,result['input'],result['output'],json.dumps(opportunity.route)))
 
     def paper_fill(self, bot, opportunity, now=None):
         """Atomic modelled fill; no exchange orders, no stale-book reuse or over-allocation."""

@@ -11,10 +11,12 @@ class GateTests(unittest.TestCase):
         filename='controllers/generic/jino_cross_exchange_arbitrage.py'
         tree=ast.parse(Path(filename).read_text())
         tree.body=[n for n in tree.body if isinstance(n,ast.ClassDef) and n.name=='JinoCrossExchangeArbitrageController']
-        namespace={'ArbitrageController':object,'JinoCrossExchangeArbitrageConfig':object,'List':List,'ExecutorAction':object,'Decimal':__import__('decimal').Decimal}
+        namespace={'ArbitrageController':object,'JinoCrossExchangeArbitrageConfig':object,'List':List,'ExecutorAction':object,
+                   'StopExecutorAction':lambda **kwargs:kwargs,'Decimal':__import__('decimal').Decimal}
         exec(compile(tree,filename,'exec'),namespace)
         obj=namespace['JinoCrossExchangeArbitrageController'].__new__(namespace['JinoCrossExchangeArbitrageController'])
-        obj.config=SimpleNamespace(safety_mode='live',live_readiness_max_age_seconds=120)
+        obj.config=SimpleNamespace(id='test',safety_mode='live',live_readiness_max_age_seconds=120)
+        obj.executors_info=[]
         obj.market_data_provider=SimpleNamespace(time=lambda:1000)
         obj.processed_data={}
         return obj
@@ -36,3 +38,10 @@ class GateTests(unittest.TestCase):
         self.assertEqual(controller.determine_executor_actions(),[])
         controller.config.safety_mode='observe'
         self.assertEqual(controller.determine_executor_actions(),[])
+
+    def test_readonly_transition_stops_active_executors(self):
+        controller=self.controller();controller.config.safety_mode='readonly'
+        controller.executors_info=[SimpleNamespace(id='active',is_active=True),SimpleNamespace(id='closed',is_active=False)]
+        self.assertEqual(controller.determine_executor_actions(),[{'controller_id':'test','executor_id':'active','keep_position':True}])
+        controller.config.safety_mode='observe'
+        self.assertEqual(len(controller.determine_executor_actions()),1)

@@ -35,6 +35,7 @@ class PublicFeed:
         self.rules, self.rules_at = {}, 0
         self.next_request, self.blocked_until = 0, 0
         self.request_interval = 0.25
+        self.quote_prices,self.quote_prices_at,self.bitget_minimums={},0,{}
 
     def get(self, path, **query):
         if time.monotonic() < self.blocked_until:
@@ -134,6 +135,7 @@ class PublicFeed:
             instruments = self.get('/api/v2/spot/public/symbols')
             tickers = self.get('/api/v3/market/tickers', category='SPOT')
             quote_usdt = self._bitget_quote_usdt_prices(tickers)
+            self.quote_prices,self.quote_prices_at=quote_usdt,time.time()
             for item in instruments:
                 if item.get('status') != 'online':
                     continue
@@ -150,6 +152,7 @@ class PublicFeed:
                         raise ValueError('invalid Bitget trading rule')
                 except (KeyError, ValueError, TypeError, InvalidOperation):
                     continue
+                self.bitget_minimums[f"{item['baseCoin']}-{quote}"]=number(item['minTradeUSDT'])
                 rules[f"{item['baseCoin']}-{quote}"] = (
                     step, minimum, min_notional_quote, maximum)
         self.rules, self.rules_at = rules, time.time()
@@ -179,5 +182,15 @@ class PublicFeed:
         bids = tuple((number(p), number(q)) for p, q, *_ in data['bids'])
         asks = tuple((number(p), number(q)) for p, q, *_ in data['asks'])
         step, minimum, notional, maximum = self.rules[pair]
+        if self.exchange=='bitget' and pair.split('-')[1]!='USDT':
+            if time.time()-self.quote_prices_at>3:
+                requested=time.time()
+                self.quote_prices=self._bitget_quote_usdt_prices(self.get('/api/v3/market/tickers',category='SPOT'))
+                self.quote_prices_at=requested
+            value=self.quote_prices.get(pair.split('-')[1])
+            if not value or not 0<=time.time()-self.quote_prices_at<=3:
+                raise ValueError('Fresh Bitget quote-to-USDT conversion required')
+            notional=self.bitget_minimums[pair]/value
+            stamp=min(stamp,self.quote_prices_at)
         return Book(self.exchange, pair, bids, asks, stamp, sequence, self.fee,
                     step, minimum, notional, maximum)

@@ -56,6 +56,16 @@ class StoreTests(unittest.TestCase):
         with self.store.connect() as db:db.execute("UPDATE settings SET value='2000-01-01' WHERE key='day'")
         self.assertTrue(self.store.snapshot()['halt'])
 
+    def test_rejected_start_and_reset_commit_loss_latch(self):
+        for action in (lambda: self.store.control('two', True), self.store.reset):
+            with self.store.connect() as db:
+                db.execute("UPDATE bots SET capital='2.2', enabled=1")
+                db.execute("UPDATE settings SET value='0' WHERE key='halt'")
+            with self.assertRaises(ValueError):action()
+            with self.store.connect() as db:
+                self.assertEqual(self.store._get(db, 'halt'), '1')
+                self.assertFalse(any(r[0] for r in db.execute('SELECT enabled FROM bots')))
+
     def test_invalid_budget_changes_rollback(self):
         for budget in ({'one':'3','two':'2'},{'one':'-1','two':'6'},{'one':'5'}):
             with self.assertRaises(ValueError):self.store.configure(budget)

@@ -32,7 +32,8 @@ class ScannerTests(unittest.TestCase):
         accepted, near, rejected = scan_with_diagnostics(
             triangle(), D('2'), time.time(), min_profit=D('0.20'))
         self.assertEqual(accepted, [])
-        self.assertEqual(len(near), 1)
+        # Both route directions are evaluated; the profitable direction ranks first.
+        self.assertEqual(len(near), 2)
         self.assertEqual(near[0][0].kind, 'triangular')
         self.assertIn('unter Mindestgewinn', near[0][1])
         self.assertEqual(rejected, {})

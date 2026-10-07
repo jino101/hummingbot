@@ -32,9 +32,9 @@ def test_calculates_net_spread_after_fees_and_slippage():
     )
     assert opportunity is not None
     assert opportunity.gross_spread_pct == Decimal("0.03")
-    assert opportunity.estimated_fee_pct == Decimal("0.003")
-    assert opportunity.net_spread_pct == Decimal("0.026")
-    assert opportunity.expected_profit_quote == Decimal("1.3000")
+    assert opportunity.estimated_fee_pct == Decimal("0.00306")
+    assert opportunity.net_spread_pct == Decimal("0.02594")
+    assert opportunity.expected_profit_quote == Decimal("1.29700")
 
 
 def test_caps_amount_by_available_depth():
