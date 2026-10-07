@@ -3,7 +3,7 @@ from dataclasses import dataclass
 from decimal import Decimal, ROUND_DOWN
 from itertools import permutations
 from typing import Tuple
-from collections import defaultdict
+from collections import defaultdict, Counter
 
 
 def number(value):
@@ -77,7 +77,6 @@ class Book:
             if remaining > Decimal("1e-24"):
                 raise ValueError("Insufficient depth")
             quantity = (raw_quantity / self.step).to_integral_value(rounding=ROUND_DOWN) * self.step
-            # Calculate actual rounded order notional, excluding the stress buffer.
             left, notional = quantity, Decimal("0")
             for price, available in self.asks:
                 used = min(left, available)
@@ -114,59 +113,89 @@ class Opportunity:
         return self.profit / self.input_amount
 
 
-def scan(books, amount, now, start_asset="USDT", max_age=3.0, min_profit=Decimal("0.0035"),
-         slippage=Decimal("0.001")):
-    """Cross exchange estimates and three distinct assets on one exchange."""
-    amount = number(amount)
-    if amount <= 0 or max_age <= 0:
-        raise ValueError("Invalid scan settings")
-    books = [b for b in books if 0 <= now - b.timestamp <= max_age]
-    results = []
+def _prepare(books, now, start_asset, max_age):
+    fresh = [b for b in books if 0 <= now - b.timestamp <= max_age]
     adjacency = defaultdict(lambda: defaultdict(list))
     quoted = defaultdict(list)
-    for book in books:
+    for book in fresh:
         for asset in book.assets:
             adjacency[book.exchange][asset].append(book)
         if book.assets[1] == start_asset:
             quoted[book.pair].append(book)
-    def triangle_routes():
-        for edges in adjacency.values():
-            for first in edges[start_asset]:
-                asset = next(a for a in first.assets if a != start_asset)
-                for second in edges[asset]:
-                    if second == first:
-                        continue
-                    middle = next(a for a in second.assets if a != asset)
-                    if middle == start_asset:
-                        continue
-                    for third in edges[middle]:
-                        if start_asset in third.assets:
-                            yield first, second, third
-    for route in triangle_routes():
+    return fresh, adjacency, quoted
+
+
+def _triangle_routes(adjacency, start_asset):
+    for edges in adjacency.values():
+        for first in edges[start_asset]:
+            asset = next(a for a in first.assets if a != start_asset)
+            for second in edges[asset]:
+                if second == first:
+                    continue
+                middle = next(a for a in second.assets if a != asset)
+                if middle == start_asset:
+                    continue
+                for third in edges[middle]:
+                    if start_asset in third.assets:
+                        yield first, second, third
+
+
+def scan_with_diagnostics(books, amount, now, start_asset="USDT", max_age=3.0,
+                          min_profit=Decimal("0.0035"), slippage=Decimal("0.001"),
+                          near_limit=5):
+    """Return executable estimates plus best valid routes below threshold and rejection counts."""
+    amount = number(amount)
+    min_profit = number(min_profit)
+    if amount <= 0 or max_age <= 0 or near_limit < 1:
+        raise ValueError("Invalid scan settings")
+    _, adjacency, quoted = _prepare(books, now, start_asset, max_age)
+    accepted, below = [], []
+    rejected = Counter()
+
+    for route in _triangle_routes(adjacency, start_asset):
         asset, output = start_asset, amount
         visited = [asset]
         try:
             for book in route:
                 asset, output = book.convert(asset, output, slippage)
                 visited.append(asset)
-        except ValueError:
+        except ValueError as exc:
+            rejected[str(exc)] += 1
             continue
         if asset != start_asset or len(set(visited[:-1])) != 3:
+            rejected["Route does not close to three distinct assets"] += 1
             continue
         item = Opportunity("triangular", tuple((b.exchange, b.pair) for b in route), amount, output,
                            "|".join(f"{b.exchange}:{b.pair}:{b.sequence}" for b in route))
         if item.net_fraction >= min_profit:
-            results.append(item)
+            accepted.append(item)
+        else:
+            below.append((item, f"unter Mindestgewinn {min_profit * 100:.3f} %"))
+
     for buy, sell in (route for matches in quoted.values() for route in permutations(matches, 2)):
         if buy.exchange == sell.exchange:
             continue
         try:
             base, quantity = buy.convert(start_asset, amount, slippage)
             _, output = sell.convert(base, quantity, slippage)
-        except ValueError:
+        except ValueError as exc:
+            rejected[str(exc)] += 1
             continue
         item = Opportunity("cross_exchange", ((buy.exchange, buy.pair), (sell.exchange, sell.pair)),
                            amount, output, f"{buy.exchange}:{buy.sequence}|{sell.exchange}:{sell.sequence}")
         if item.net_fraction >= min_profit:
-            results.append(item)
-    return sorted(results, key=lambda x: x.net_fraction, reverse=True)
+            accepted.append(item)
+        else:
+            below.append((item, f"unter Mindestgewinn {min_profit * 100:.3f} %"))
+
+    accepted.sort(key=lambda x: x.net_fraction, reverse=True)
+    below.sort(key=lambda x: x[0].net_fraction, reverse=True)
+    return accepted, below[:near_limit], dict(rejected)
+
+
+def scan(books, amount, now, start_asset="USDT", max_age=3.0, min_profit=Decimal("0.0035"),
+         slippage=Decimal("0.001")):
+    results, _, _ = scan_with_diagnostics(
+        books, amount, now, start_asset=start_asset, max_age=max_age,
+        min_profit=min_profit, slippage=slippage)
+    return results
