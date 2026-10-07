@@ -70,6 +70,16 @@ class FeedTests(unittest.TestCase):
         self.assertEqual(feed.pairs(),())
         with self.assertRaises(ValueError):feed.book('A-ABC')
 
+    def test_malformed_kucoin_rule_is_skipped(self):
+        def fetch(url):
+            data=[
+                {'symbol':'BAD-USDT','enableTrading':True,'baseIncrement':'','baseMinSize':'0.1','minFunds':'1','baseMaxSize':'1000'},
+                {'symbol':'GOOD-USDT','enableTrading':True,'baseIncrement':'0.01','baseMinSize':'0.1','minFunds':'1','baseMaxSize':'1000'}
+            ]
+            return {'code':'200000','data':data}
+        feed=PublicFeed('kucoin','0.002',fetch)
+        self.assertEqual(feed.pairs(),('GOOD-USDT',))
+
     def test_api_errors(self):
         for ex,code in [('kucoin','400000'),('bitget','40000'),('binance',-1)]:
             feed=PublicFeed(ex,'0.001',lambda url:{'code':code})
