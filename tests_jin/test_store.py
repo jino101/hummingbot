@@ -71,6 +71,18 @@ class StoreTests(unittest.TestCase):
         self.store.publish('one',{'feed':'test'})
         self.assertEqual(self.store.snapshot()['bots'][0]['status']['feed'],'test')
 
+    def test_explicit_paper_budget_reset(self):
+        self.store.control('one',True)
+        self.assertTrue(self.store.paper_fill('one',self.chance()))
+        self.store.emergency()
+        self.store.reset_budgets({'one':'50','two':'50'})
+        state=self.store.snapshot()
+        self.assertEqual(state['capital'],'100')
+        self.assertFalse(state['halt'])
+        self.assertEqual(len(state['trades']),0)
+        self.assertTrue(all(not bot['enabled'] for bot in state['bots']))
+        self.assertEqual({bot['initial'] for bot in state['bots']},{'50'})
+
     def test_concurrent_duplicate_fills_are_atomic(self):
         self.store.control('one',True)
         results=[]
