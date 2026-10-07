@@ -45,8 +45,11 @@ class Store:
 
     def configure(self, budgets):
         """Idempotent startup; never reset accumulated capital or a stopped bot."""
-        if not budgets or sum((number(v) for v in budgets.values()), Decimal('0')) != Decimal('5'):
-            raise ValueError('Initial paper budgets must total 5 USDT')
+        if not budgets:
+            raise ValueError('At least one paper budget is required')
+        total = sum((number(v) for v in budgets.values()), Decimal('0'))
+        if total <= 0 or total > Decimal('1000000'):
+            raise ValueError('Initial paper budgets must total more than 0 and at most 1,000,000 USDT')
         with self.connect() as db:
             for bot, budget in budgets.items():
                 if number(budget) <= 0:
@@ -59,6 +62,26 @@ class Store:
             actual = {r[0] for r in db.execute('SELECT id FROM bots')}
             if actual != set(budgets):
                 raise ValueError('Bot list changed; migrate the ledger explicitly')
+
+    def reset_budgets(self, budgets):
+        """Explicit PAPER-only migration: reset virtual balances/trades and stop bots."""
+        if not budgets:
+            raise ValueError('At least one paper budget is required')
+        parsed = {bot: number(value) for bot, value in budgets.items()}
+        total = sum(parsed.values(), Decimal('0'))
+        if any(value <= 0 for value in parsed.values()) or total > Decimal('1000000'):
+            raise ValueError('Paper budgets must be positive and total at most 1,000,000 USDT')
+        with self.connect() as db:
+            db.execute('BEGIN IMMEDIATE')
+            db.execute('DELETE FROM trades')
+            db.execute('DELETE FROM bots')
+            for bot, budget in parsed.items():
+                db.execute('INSERT INTO bots(id,capital,initial,enabled,status) VALUES (?,?,?,?,?)',
+                           (bot, str(budget), str(budget), 0, '{}'))
+            db.execute("DELETE FROM settings WHERE key IN ('day','baseline','reason')")
+            self._setting(db, 'halt', '0')
+        # Establish today's fresh baseline immediately.
+        self.snapshot()
 
     def _risk(self, db, now):
         day = datetime.fromtimestamp(now, ZoneInfo('Europe/Berlin')).date().isoformat()
