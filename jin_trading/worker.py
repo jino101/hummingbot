@@ -6,7 +6,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import asdict
 from decimal import Decimal
 
-from jin_trading.arbitrage import number, scan
+from jin_trading.arbitrage import number, scan_with_diagnostics
 from jin_trading.feeds import PublicFeed
 from jin_trading.universe import plan_batches
 
@@ -106,11 +106,14 @@ class Worker:
             capital = number(bot['capital'])
             amount = min(capital * number(self.config['max_deploy_fraction']),
                          capital * Decimal('0.01') / number(self.config['stress_fraction']))
-            opportunities = scan(books, amount, time.time(), max_age=self.config['max_age'],
-                                 min_profit=number(self.config['min_profit']),
-                                 slippage=number(self.config['slippage']))
+            opportunities, near_misses, rejected = scan_with_diagnostics(
+                books, amount, time.time(), max_age=self.config['max_age'],
+                min_profit=number(self.config['min_profit']),
+                slippage=number(self.config['slippage']), near_limit=10)
             spec = self.config['bots'][bot['id']]
             eligible = [o for o in opportunities if o.kind == 'triangular' and o.route[0][0] == spec['exchange']]
+            bot_near = [(o, reason) for o, reason in near_misses
+                        if o.kind == 'triangular' and o.route[0][0] == spec['exchange']][:5]
             # Repeat only after observing a new complete book sequence; transaction checks deduplicate.
             if eligible:
                 self.store.paper_fill(bot['id'], eligible[0])
@@ -119,6 +122,9 @@ class Worker:
                 'fee_assumptions': self.config['fees'], 'estimated_stress_loss': str(amount * number(self.config['stress_fraction'])),
                 'universe': self.universe_status,
                 'opportunities': [asdict(o) | {'net_fraction': str(o.net_fraction)} for o in opportunities[:20]],
+                'near_misses': [asdict(o) | {'net_fraction': str(o.net_fraction), 'reason': reason}
+                                for o, reason in bot_near],
+                'rejected_counts': rejected,
                 'live_readiness': 'Not implemented', 'updated_at': time.time()})
 
     def run(self):
