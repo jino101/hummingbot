@@ -2,7 +2,7 @@ import time
 import unittest
 from decimal import Decimal as D
 
-from jin_trading.arbitrage import Book, Opportunity, number, scan
+from jin_trading.arbitrage import Book, Opportunity, number, scan, scan_with_diagnostics
 
 
 def book(pair, bid, ask, exchange='kucoin', timestamp=None, seq='1', minimum='0', step='0.000001', depth='1000', fee='0.001'):
@@ -27,6 +27,23 @@ class ScannerTests(unittest.TestCase):
 
     def test_no_profit_after_fees(self):
         self.assertEqual(scan(triangle(), D('2'), time.time(), min_profit=D('0.20')), [])
+
+    def test_diagnostics_returns_near_miss_below_threshold(self):
+        accepted, near, rejected = scan_with_diagnostics(
+            triangle(), D('2'), time.time(), min_profit=D('0.20'))
+        self.assertEqual(accepted, [])
+        self.assertEqual(len(near), 1)
+        self.assertEqual(near[0][0].kind, 'triangular')
+        self.assertIn('unter Mindestgewinn', near[0][1])
+        self.assertEqual(rejected, {})
+
+    def test_diagnostics_counts_exchange_limit_rejections(self):
+        limited = triangle()
+        limited[0] = book('A-USDT', '0.99', '1', timestamp=time.time(), minimum='100')
+        accepted, near, rejected = scan_with_diagnostics(limited, D('2'), time.time())
+        self.assertEqual(accepted, [])
+        self.assertEqual(near, [])
+        self.assertGreater(rejected.get('Order outside exchange limits', 0), 0)
 
     def test_stale_future_and_missing_leg_fail_closed(self):
         now=time.time()
