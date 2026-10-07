@@ -120,6 +120,8 @@ def main():
     parser.add_argument('--host', default='127.0.0.1')
     parser.add_argument('--port', type=int, default=8788)
     parser.add_argument('--no-worker', action='store_true', help='Serve existing ledger only')
+    parser.add_argument('--reset-paper-budgets', action='store_true',
+                        help='Reset ONLY virtual paper balances/trades to config budgets; bots remain stopped')
     args = parser.parse_args()
     config = load_config(args.config)
     token = os.environ.get('JIN_DASHBOARD_TOKEN', '')
@@ -127,7 +129,11 @@ def main():
         parser.error('Set a random JIN_DASHBOARD_TOKEN of at least 24 characters')
     Path(args.db).parent.mkdir(parents=True, exist_ok=True)
     store = Store(args.db)
-    store.configure({bot: spec['budget'] for bot, spec in config['bots'].items()})
+    budgets = {bot: spec['budget'] for bot, spec in config['bots'].items()}
+    if args.reset_paper_budgets:
+        store.reset_budgets(budgets)
+    else:
+        store.configure(budgets)
     server = make_server(store, token, args.host, args.port,
                          config.get("existing_observation_path"), config.get("existing_kill_switch_path"))
     worker = Worker(store, config)
