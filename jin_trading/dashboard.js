@@ -31,9 +31,13 @@ function render(state) {
     const status=textNode('p','Max. Einsatz '+bot.max_order+' USDT · Risikobudget '+bot.risk_budget+' USDT'); status.className='status'; card.append(status);
     const details=textNode('details',''); details.append(textNode('summary','Chancen und Börsenstatus'));
     const list=textNode('ul','');
-    for(const chance of bot.status.opportunities || []) list.append(textNode('li',chance.kind+' · '+chance.route.map(r=>r.join(':')).join(' → ')+' · geschätzt '+(Number(chance.net_fraction)*100).toFixed(3)+' %'));
-    for(const error of bot.status.errors || []) list.append(textNode('li',error));
-    if(!list.childNodes.length) list.append(textNode('li','Keine passende Chance / noch keine Daten'));
+    for(const chance of bot.status.opportunities || []) list.append(textNode('li','PASSEND · '+chance.kind+' · '+chance.route.map(r=>r.join(':')).join(' → ')+' · netto '+(Number(chance.net_fraction)*100).toFixed(3)+' %'));
+    for(const miss of bot.status.near_misses || []) list.append(textNode('li','KNAPP VERFEHLT · '+miss.route.map(r=>r.join(':')).join(' → ')+' · netto '+(Number(miss.net_fraction)*100).toFixed(3)+' % · '+miss.reason));
+    const rejected=bot.status.rejected_counts || {};
+    const rejectedEntries=Object.entries(rejected).sort((a,b)=>b[1]-a[1]).slice(0,5);
+    for(const [reason,count] of rejectedEntries) list.append(textNode('li','ABGELEHNT · '+count+'× · '+reason));
+    for(const error of bot.status.errors || []) list.append(textNode('li','FEHLER · '+error));
+    if(!list.childNodes.length) list.append(textNode('li','Keine passende oder knapp verfehlte Chance / noch keine Daten'));
     details.append(list);card.append(details);el('bots').append(card);
   }
   el('trades').replaceChildren();
