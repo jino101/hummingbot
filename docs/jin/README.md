@@ -1,4 +1,8 @@
-# JIN Trading — Audit and implementation, 6 October 2026
+# JIN Trading — Audit and implementation, 7 October 2026
+
+Latest focused review: [AUDIT-2026-10-07.md](AUDIT-2026-10-07.md).
+The supported coin universe, native CI and Docker build are confirmed; shared
+real-money risk supervision, active-order reconciliation and the Sites bridge remain open.
 
 Bases reviewed: `jino101/hummingbot` master `2bfaccc48dd49e71a5b6d9b3011808e127dd00cd`
 and the user's actual development branch `chatgpt/arbitrage-bot`, commit
@@ -27,16 +31,18 @@ CLI, Docker and project/test structure, not a security audit of every connector.
 
 | Finding | Implemented change | Remaining limitation |
 |---|---|---|
-| Arbitrage PnL percentage divided by base units rather than purchase notional | Divide by filled purchase quantity × actual buy price | Requires native engine integration checks |
+| Arbitrage PnL percentage divided by base units rather than purchase notional | Divide by filled purchase quantity × actual buy price | Native regression CI passed; live account/runtime validation remains |
 | Different quote currencies added/subtracted without conversion | Freeze quote conversion rate at opportunity evaluation; convert sell proceeds and fees | FX movement after the estimate is not continuously marked |
 | Identical quote assets depended on an oracle entry | Return identity rate; reject absent/nonpositive/nonfinite oracle results | Oracle availability still required for unlike quotes |
 | Fee query passed the same asset as base and quote | Pass actual pair assets; validate gas conversion input | Account-specific fees still need validation |
 | Failed orders resubmitted the original full amount | Do not resubmit automatically; attempt cancellation, preserve known fills/order IDs; controller blocks after FAILED/POSITION_HOLD | A late fill or uncertain submission still requires reconciliation; this is not a complete hedge engine |
-| Status could return None instead of list | Always return a status list | No native runtime in this environment |
+| Status could return None instead of list | Always return a status list | Native CI passed; production soak remains |
 | No shared multi-bot portfolio ledger (existing limits are per controller) | Shared SQLite transactions, independent allocations totalling 5 USDT, deduplication and reinvestment | Controls affect only the JIN paper engine, not arbitrary Hummingbot instances |
 | No triangular monitor | Three-asset closed routes, depth walking, fees, rounding, minimum size/notional and stale-book rejection | No sequential live triangular execution |
 | Existing dashboard lacks per-bot paper controls | Authenticated responsive dashboard, per-bot paper Start/Stop, shared Not-Aus, PnL, opportunities, exchange errors, CSV | Existing cross-exchange observation shown; no live-mode toggle or external bot administration |
-| Existing launchers/CI lack snapshot replay and shared paper deployment | Docker restart/persistent volume, bounded recording rotation, snapshot replay, focused CI | Docker build and production deployment not verified here |
+| Existing launchers/CI lack snapshot replay and shared paper deployment | Docker restart/persistent volume, bounded recording rotation, snapshot replay, focused CI | Docker build/Compose checks passed in CI; production runtime remains unverified |
+| Early stop skipped cancellation and known-fill retention | Attempt both cancellations; preserve known exposure as POSITION_HOLD | Cancellation acknowledgement, late fills and restart reconciliation remain open |
+| Live readiness accepted infinite market/account values | Reject nonfinite/invalid cap, price and balances | Real account probes and global risk integration remain open |
 
 ## Run the working paper application
 
@@ -68,8 +74,9 @@ No API keys are needed for public REST snapshots. Symbols that are unavailable,
 whose rules cannot be interpreted, or whose minimums exceed the allocated amount
 are excluded. With 5 USDT, and especially with two small allocations, no executable
 opportunity may meet the minimums. This is a valid outcome, not an error to bypass.
-Bitget's REST adapter currently monitors only USDT-quoted pairs because its
-USDT-denominated minimum cannot be blindly treated as a BTC minimum.
+Bitget supports non-USDT quote pairs when it can convert the USDT-denominated
+minimum into quote units. Reference-ticker age and conversion-cache freshness still
+need correction; this adapter remains paper-only.
 
 ### Maximum coin universe
 
@@ -77,7 +84,7 @@ The example now defaults to `pair_mode: auto`. Every 15 minutes, the public
 symbol catalogue is refreshed. All supported active USDT pairs and all complete
 three-asset routes returning to USDT on the same exchange enter the schedule.
 There is no fixed coin-count cap. Binance spot eligibility is checked; Bitget
-remains USDT-only until non-USDT minimum conversion is implemented. Other disconnected
+uses positive finite USDT conversion prices for non-USDT quote rules. Other disconnected
 quote markets cannot use a USDT starting balance and are not scheduled.
 
 `batch_size: 12` limits concurrent-cycle coverage, not the total universe. Complete
@@ -193,17 +200,23 @@ are absent. These tests supplement, not replace, native Hummingbot tests.
 
 Observed here:
 
-- 36 new focused tests plus 32 existing pure/mobile tests pass; approximately 90% line/branch coverage for `jin_trading`.
+- At starting revision `c2bb5e7`, GitHub CI passed 43 focused unittest tests,
+  32 pure/mobile tests and 198 targeted native tests, with 89% coverage for
+  `jin_trading`. These groups are not all independent.
+- The October 7 safety corrections passed 46 local unittest tests and twelve
+  invalid-market/account scenarios. GitHub CI also passed 212 targeted native
+  tests, 46 unittest tests, 44 pure/mobile tests and Docker checks, with 89%
+  `jin_trading` coverage. Separate native/Paper runs are linked in the audit.
 - Syntax compilation, JavaScript syntax validation and `git diff --check` pass.
 - Dashboard authentication/control endpoints pass HTTP integration tests. A visual
   mobile-browser test remains unverified: Chromium was absent and its download
   was blocked/truncated in this environment.
-- Native executor/controller tests could not collect: the compiled
-  `connector_base` extension and `prompt_toolkit` are absent. Native tests were updated
-  for the corrected PnL and new failure handling but their success is unverified.
+- The local environment lacks compiled connectors and pytest. Targeted native
+  executor/controller/provider/loader tests were instead verified through GitHub CI.
 - Actual public-API probes: KuCoin timeout, Bitget timeout, Binance HTTP 451.
   Fixture-based parsing is tested; reachable real feeds still need a host test.
-- No Docker executable was found, so image/Compose runtime verification remains open.
+- Docker image build and Compose configuration passed GitHub CI. A running service,
+  restart/backup test and production deployment remain open.
 - No real order was submitted and no production service was published.
 
 ## Work still required for the complete requested system

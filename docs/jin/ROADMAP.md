@@ -1,61 +1,108 @@
 # JIN Trading Roadmap
 
-Stand: 6. Oktober 2026. Arbeitszweig: `feat/jin-trading-control`, Entwurfs-PR #2
-auf `chatgpt/arbitrage-bot`. Kein Live-Betrieb durch den neuen Paper-Dienst.
+Stand: **7. Oktober 2026**. Projekt `jino101/hummingbot`, Arbeitszweig
+`feat/jin-trading-control`, Entwurfs-[PR #2](https://github.com/jino101/hummingbot/pull/2).
+Diese Reihenfolge basiert auf der [Codeprüfung](AUDIT-2026-10-07.md).
 
-## Bereits umgesetzt
+Ziel: zunächst 5 USDT auf KuCoin, mehrere zentral begrenzte Bots, maximal 10 %
+Tagesverlust als Stop-Regel, Smartphone-Bedienung, danach weitere Strategien,
+Aktien und Forex. Kapital und Handelsbarkeit vor Echtgeldbetrieb prüfen.
 
-- Automatische Erkennung aller unterstützten aktiven USDT-Märkte und kompletter
-  USDT-Dreieckswege auf KuCoin/Binance. Bitget unterstützt zusätzlich konservativ
-  bewertete Nicht-USDT-Quote-Märkte, sofern ein eindeutiger USDT-Referenzkurs vorliegt.
-- Kein festes Coin-Limit; faire REST-Rotation mit vollständigen Dreiecksgruppen,
-  Anfrageabständen, HTTP-Cooldown und Anzeige der tatsächlichen Abdeckung.
-- Paper-Bots, gemeinsame virtuelle 5 USDT, Reinvestition, 10-%-Tagesverlustsperre,
-  persistenter Not-Aus, Dashboard, Recording/Replay und Docker-Konfiguration.
-- Korrekturen an Transfer-Richtung, PnL, Gebühren, Teilfüllungsaufbewahrung und
-  Live-Bereitschaft. Vor dieser Erweiterung bestanden beide PR-Prüfungen auf
-  GitHub einschließlich nativer Jino-Tests; neue Änderungen separat prüfen.
+## 0 — Grundlage: vorhanden
 
-## Reihenfolge und Abnahmekriterien
+- [x] Eigenen Hummingbot-Controller, Beobachtung, Readonly-Prüfungen und Android-Quellen erhalten.
+- [x] Unterstützten aktiven USDT-Katalog und erreichbare USDT-Dreiecke automatisch erkennen.
+- [x] Route-komplette REST-Batches ohne feste Gesamt-Coin-Grenze rotieren; Cooldown und Abdeckung anzeigen.
+- [x] Bitget-Mindestnotional für Nicht-USDT-Quotes umrechnen, fehlende Umrechnung ausschließen.
+- [x] Mehrere Paper-Bots, gemeinsame virtuelle 5 USDT, Reinvestition, Not-Aus und 10-%-Tagesregel.
+- [x] Dashboard, Recording/Replay, Docker-Build und Compose-Konfiguration.
+- [x] Stop fordert Orderstornierung an und behält bekannte Füllungen; nicht endliche Live-Eingaben blockieren.
 
-| Priorität | Fehlender Teil | Fertig, wenn … | Voraussetzung |
-|---|---|---|---|
-| P0 | Aktuelle Erweiterung vollständig prüfen | Paper- und native GitHub-CI grün; Rotation unter realen API-Antworten getestet | Erreichbare Börsen-APIs |
-| P0 | Smartphone-Zugriff und 24/7-Betrieb | Docker-Build geprüft; HTTPS/VPN, Neustart, Sicherung und Not-Aus am Galaxy getestet | Eigener Host oder gewählter Server |
-| P0 | 5-USDT-Machbarkeitsprüfung | Tatsächliche KuCoin-Gebühren, Mindestmengen, Guthaben und erreichbare Routen ergeben einen dokumentierten Bericht | Börsenkonto lokal verbinden, keine Schlüssel im Chat |
-| P1 | Vollständige Transferprüfung | Gemeinsame Tokenidentität, Netzwerke, Aus-/Einzahlungssperren, Gebühren und Kapitalverteilung geprüft | Authentifizierte Kontodaten, wo erforderlich |
-| P1 | Große WebSocket-Abdeckung | Automatische Subscription-Shards, Reconnect, Snapshot/Diff-Abgleich und messbare Vollumlaufzeiten | Native Connector-Integration |
-| P1 | Bitget-Dreieckswege | **Softwareteil umgesetzt:** Nicht-USDT-Mindestwerte werden über einen aktuellen USDT-Referenzkurs in Quote-Einheiten umgerechnet; fehlende Umrechnung bleibt fail-closed. Offen: reale API-/Fixture-Prüfung und persönliche Fee-Tiers. | Erreichbare Bitget-API / Kontodaten für finale Validierung |
-| P1 | Live-Dreiecks-Executor | Jede Teilfüllung, Zeitüberschreitung, späte Füllung und jeder Neustart reconciliert; sichere Restmengenbehandlung getestet | Zustandsmaschine und Börsensandbox |
-| P1 | Gemeinsame reale Mehrbot-Steuerung | Portfoliorisiko über alle Prozesse/Konten; reserviertes Kapital; zentraler Order-Stopp und Orderabgleich | Authentifizierte Supervisor-Anbindung |
-| P2 | Wachstumsstufen | Konfigurierbare Kapitalstufen und Einsatzgrößen; Tageslimit bleibt kontoweit; Replay validiert | Abstimmung der Stufen ohne Gewinnversprechen |
-| P2 | Weitere Strategien | Jede Strategie isoliert konfigurierbar, mit Kosten/Slippage validiert und zentral begrenzt | Strategieauswahl und realistische Daten |
-| P2 | Aktien und Forex | Brokeradapter mit Handelszeiten, Währungen, Lotgrößen und Gebühren; Sandboxtests bestanden | Broker auswählen und Konto bereitstellen |
-| P3 | Niedrige Latenz / HFT-ähnlicher Modus | Datenalter und Order-Latenz messbar; Lasttests, Co-Location-Bedarf und Kosten bewertet | Infrastruktur und Börsenlimits |
+Abnahmebeleg nach Sicherheitskorrekturen: **212 native Tests, 46 Paper-unittests,
+44 Pure-/Mobile-Tests und Docker-Checks grün**, **89 % Coverage** für `jin_trading`.
+Zwölf ungültige Eingabeszenarien geprüft; GitHub-Checks im Audit verlinkt.
 
-## Nächster konkreter Meilenstein
+## 1 — P0: Orderaufsicht und gemeinsames reales Risiko
 
-Scanner auf einem erreichbaren Host starten, den gesamten Marktkatalog erfassen,
-einen vollständigen Rotationsdurchlauf protokollieren und am Smartphone prüfen.
-Ergebnis: sichtbare Paaranzahl je Börse, Wiederbesuchszeit, API-Fehler und für
-5 USDT tatsächlich modellierbare Routen. Erst danach Live-Ausführung ausbauen.
+- [ ] **R01 / F03:** Not-Aus erzeugt Stop-Actions für aktive Executor; Stornierungsbestätigungen,
+  späte Füllungen und unbekannte Orders dauerhaft abgleichen.
+- [ ] **R02 / F04:** Gemeinsame reale Equity, Gebühren, gehaltene Positionen und reserviertes
+  Kapital über alle Bots/Konten führen; 10-%-Grenze mit einheitlichem Tageswechsel.
+- [ ] **R03 / F05:** Tatsächliches Orderbuchalter vor Signal und Order prüfen; Reconnect-Lücken blockieren.
 
-## Plugin-Status
+**Fertig, wenn:** Teilfüllung, Ordertimeout, Netzwerkabbruch, doppeltes Event,
+Not-Aus und Neustart getestet sind; keine zweite Instanz dasselbe Kapital einsetzen
+kann; gehaltene Verluste in der globalen Equity erscheinen.
 
-- GitHub: vorhandener Code und PR werden direkt gepflegt.
-- Context7: Hummingbot-Dokumentation abgefragt; Börsenregeln zusätzlich an
-  offiziellen KuCoin/Binance/Bitget-Dokumentationen geprüft.
-- Composio: Werkzeugerkennung genutzt; zusätzliche GitHub-Verbindung benötigt.
-- Replit: kein passendes vorhandenes Trading-Projekt gefunden; kein Parallelprojekt erstellt.
-- Pets: Sammlung geprüft; reine Chat-Begleiter, keine Trading-Funktion.
-- Template Creator: Workflow geprüft. Benötigt eine unterstützte Referenz und
-  überprüfte Vorschau; keine ungefragte Projekt- oder Vorlagenkopie erstellt.
-- Visualize: Roadmap wird als verständliche Phasenübersicht dargestellt.
+## 2 — P1: belastbare Kurse und 5-USDT-Machbarkeit
 
-## Grenzen
+- [ ] **R04 / F06–F08:** Bitget-Referenzkurs-Alter und Mindestnotional absichern;
+  langsame Börsen isolieren; Gebühren pro Leg samt Flat Fees korrekt bewerten.
+- [ ] **R05 / F09:** Tokenidentität, Netzwerke, Mindesttransfer, Empfangsdaten und
+  Kapitalrückweg prüfen; authentifizierten Readonly-Adapter für Bitget ergänzen.
+- [ ] **R06:** KuCoin-Konto lokal nur lesend verbinden; verfügbare 5 USDT,
+  persönliche Gebühren und alle drei Mindestorders einer Route dokumentieren.
+- [ ] **R07:** Automatische WebSocket-Subscriptions in Shards, Reconnect und
+  Snapshot/Diff-Abgleich; Kataloggröße, Datenalter und Wiederbesuchszeiten messen.
 
-Eine größere Coin-Liste erhöht die Abdeckung, nicht automatisch die Rendite.
-Rotierende REST-Daten sind keine gleichzeitige Marktüberwachung. Mindestmengen,
-Kontobeschränkungen und fehlende Liquidität können bei 5 USDT jede Route blockieren.
-Die Paper-Kapitalgrenze bildet keine Garantie für reale maximale Verluste.
-Keine echten Orders, Überweisungen oder Produktionsbereitstellung in dieser Änderung.
+**Fertig, wenn:** Vollständiger API-Katalogumlauf protokolliert; jede Route hat
+frische Daten und korrekte Mindestmengen/Kosten. Ergebnis darf auch sein:
+„Mit 5 USDT ist derzeit keine Route ausführbar.“ Keine Mindestgrenze umgehen.
+
+## 3 — P1: ein Dashboard und dauerhafter Paper-Betrieb
+
+- [ ] **R08 / F12–F13:** Vorhandene Sites-Oberfläche an dieselbe authentifizierte
+  Bot-API anbinden; Coin-Katalog, Ledger und Risikostatus serverseitig teilen.
+- [ ] **R09 / F10/F15:** Risiko-Latch bei abgewiesenem Start/Reset dauerhaft
+  speichern; Sonderzeichen-IDs, ungültige Beobachtungsdaten, Export und Log-Schreiber absichern.
+- [ ] **R10 / F14:** Host festlegen: eigener Linux-Rechner oder Replit Reserved VM
+  nach Prüfung von Kosten, Region, API-Erreichbarkeit und Datenhaltung.
+- [ ] **R11 / F14:** HTTPS/VPN, Autostart, Sicherung/Wiederherstellung, Zustandsalarm
+  und Galaxy-Test; Android-CI passend zum Arbeitszweig und signierte Release-APK.
+
+**Fertig, wenn:** 24 Stunden Paper-Betrieb mit dokumentierten API-Fehlern läuft;
+nach Neustart stimmen Ledger/Not-Aus; zwei Geräte sehen denselben Zustand;
+veraltete Chancen lassen sich nicht ausführen; eine Sicherung wurde zurückgespielt.
+
+## 4 — P1: Live-Ausführung nach bestandenen Grundlagen
+
+- [ ] **R12 / F11:** Drei-Leg-Executor mit Füllmengen, Restbeständen,
+  Gebührenwährung, Fristen, Abbruch und Recovery implementieren.
+- [ ] **R13:** Bestehenden Cross-Exchange-Executor an Supervisor und zentrale
+  Kapitalreservierung anbinden; bekannte Fill-Mengen statt ursprünglicher Menge verwenden.
+- [ ] **R14:** Sandbox-/Demotests und danach dokumentierten, gesondert
+  freigegebenen begrenzten Echtgeldtest durchführen.
+
+**Voraussetzung:** R01–R11 bestanden, handelbares Mindestkapital nachgewiesen und
+Konten lokal verbunden. Diese Roadmap erteilt keine Freigabe für echte Orders.
+
+## 5 — P2/P3: Wachstum, weitere Strategien, Aktien und Forex
+
+- [ ] **R15 / F16:** Konfigurierbare Kapitalstufen für 5/10/weitere USDT;
+  Einsatz und Reservierung wachsen innerhalb derselben globalen Risikogrenze.
+- [ ] **R16 / F16:** Market-Making/direktionale Strategien individuell konfigurieren,
+  parallel mit Kosten/Slippage testen und zentral stoppen können.
+- [ ] **R17 / F17:** Aktien-/Forex-Broker auswählen; Daten-/Orderadapter,
+  Handelszeiten, Währungen, Lotgrößen, Gebühren und Demokonto-Prüfungen ergänzen.
+- [ ] **R18 / F17:** Daten-/Order-Latenz und Lasttests messen; Infrastruktur
+  und Kosten vor Bewerbung eines niedrigen Latenzmodus prüfen.
+
+**Fertig, wenn:** Neue Strategie/Broker hat nachvollziehbare Daten- und
+Ausführungstests und kann die gemeinsame Risikogrenze nicht umgehen.
+
+## Plugin-Status und konkrete nächste Arbeit
+
+| Werkzeug | Geprüft | Nächster Einsatz |
+|---|---|---|
+| GitHub | Vorhandener PR, Code und CI; Issues deaktiviert | Arbeitsliste im PR und dieser Roadmap weiterführen |
+| Composio | Tools gesucht, keine aktive GitHub-Verbindung darin | Nach Verbindung GitHub-/Aufgaben-Workflows; Alarmziel erst festlegen |
+| Replit | Keine vorhandene App gefunden | Host für denselben Code; Reserved VM prüfen |
+| Sites | Vorhandene private JIN-Site samt eigenem Quellcode geprüft | Gemeinsame API statt browserlokaler 10-USDT-/10-Coin-Demo |
+| Visualize | Phasenübersicht aus dieser Arbeitsliste | Offene Abnahmekriterien sichtbar halten |
+
+**Nächster konkreter Implementierungsschritt:** R01–R03: aktive Orders stoppen und
+abgleichen, reale Portfoliorisiken gemeinsam führen, tatsächliches Buchalter prüfen.
+Parallel R06/R10: nur lesender KuCoin-Machbarkeitsbericht und erreichbarer Paper-Host.
+
+Benötigte externe Angaben: ausgewählter Host und später Broker; Kontoverbindung
+erfolgt lokal. Zugangsdaten gehören nicht in Chat, GitHub oder Browsercode.
