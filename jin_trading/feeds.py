@@ -5,7 +5,7 @@ Fee assumptions are configuration values, not verified account-specific fees.
 """
 import json
 import time
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 from urllib.error import HTTPError
@@ -14,12 +14,13 @@ from jin_trading.arbitrage import Book, number
 
 HOSTS = {'kucoin': 'https://api.kucoin.com', 'binance': 'https://api.binance.com',
          'bitget': 'https://api.bitget.com'}
+MAX_RESPONSE_BYTES = 16 * 1024 * 1024
 
 
 def fetch_json(url):
     with urlopen(Request(url, headers={'User-Agent': 'JIN-paper-scanner/1.0'}), timeout=8) as response:
-        raw = response.read(4 * 1024 * 1024 + 1)
-    if len(raw) > 4 * 1024 * 1024:
+        raw = response.read(MAX_RESPONSE_BYTES + 1)
+    if len(raw) > MAX_RESPONSE_BYTES:
         raise ValueError('Response too large')
     return json.loads(raw)
 
@@ -64,18 +65,13 @@ class PublicFeed:
 
     @staticmethod
     def _bitget_quote_usdt_prices(tickers):
-        """Return quote-asset values in USDT from one all-spot-tickers snapshot.
-
-        Direct ASSET-USDT prices are preferred. Inverse USDT-ASSET markets are
-        accepted only when a positive finite price is available. Missing
-        conversions intentionally cause the related non-USDT rule to be skipped.
-        """
+        """Return quote-asset values in USDT from one all-spot-tickers snapshot."""
         raw = {}
         for item in tickers:
             symbol = str(item.get('symbol', '')).upper()
             try:
                 price = number(item.get('lastPrice'))
-            except (ValueError, TypeError):
+            except (ValueError, TypeError, InvalidOperation):
                 continue
             if symbol and price > 0:
                 raw[symbol] = price
@@ -99,22 +95,40 @@ class PublicFeed:
         rules = {}
         if self.exchange == 'kucoin':
             for item in self.get('/api/v2/symbols'):
-                if item.get('enableTrading'):
-                    rules[item['symbol']] = (number(item['baseIncrement']), number(item['baseMinSize']),
-                                              number(item['minFunds']), number(item['baseMaxSize']))
+                if not item.get('enableTrading'):
+                    continue
+                try:
+                    step = number(item.get('baseIncrement'))
+                    minimum = number(item.get('baseMinSize'))
+                    notional = number(item.get('minFunds'))
+                    maximum = number(item.get('baseMaxSize'))
+                    if step <= 0 or minimum < 0 or notional < 0 or maximum <= 0:
+                        raise ValueError('invalid KuCoin trading rule')
+                    symbol = str(item.get('symbol', ''))
+                    if '-' not in symbol:
+                        raise ValueError('invalid KuCoin symbol')
+                except (ValueError, TypeError, InvalidOperation):
+                    # One malformed/incomplete market must not take down discovery.
+                    continue
+                rules[symbol] = (step, minimum, notional, maximum)
         elif self.exchange == 'binance':
             for item in self.get('/api/v3/exchangeInfo')['symbols']:
                 if (item.get('status') != 'TRADING' or not item.get('isSpotTradingAllowed', True)
                         or 'MARKET' not in item.get('orderTypes', [])):
                     continue
-                filters = {f['filterType']: f for f in item['filters']}
-                lot = filters['LOT_SIZE']
-                market = filters.get('MARKET_LOT_SIZE', {})
-                step = max(number(lot['stepSize']), number(market.get('stepSize', 0)))
-                minimum = max(number(lot['minQty']), number(market.get('minQty', 0)))
-                maximum = min(number(lot['maxQty']), number(market.get('maxQty', lot['maxQty'])))
-                notional = max(number(filters.get('MIN_NOTIONAL', {}).get('minNotional', 0)),
-                               number(filters.get('NOTIONAL', {}).get('minNotional', 0)))
+                try:
+                    filters = {f['filterType']: f for f in item['filters']}
+                    lot = filters['LOT_SIZE']
+                    market = filters.get('MARKET_LOT_SIZE', {})
+                    step = max(number(lot['stepSize']), number(market.get('stepSize', 0)))
+                    minimum = max(number(lot['minQty']), number(market.get('minQty', 0)))
+                    maximum = min(number(lot['maxQty']), number(market.get('maxQty', lot['maxQty'])))
+                    notional = max(number(filters.get('MIN_NOTIONAL', {}).get('minNotional', 0)),
+                                   number(filters.get('NOTIONAL', {}).get('minNotional', 0)))
+                    if step <= 0 or minimum < 0 or maximum <= 0 or notional < 0:
+                        raise ValueError('invalid Binance trading rule')
+                except (KeyError, ValueError, TypeError, InvalidOperation):
+                    continue
                 rules[f"{item['baseAsset']}-{item['quoteAsset']}"] = (step, minimum, notional, maximum)
         else:
             instruments = self.get('/api/v2/spot/public/symbols')
@@ -127,12 +141,17 @@ class PublicFeed:
                 quote_price = quote_usdt.get(quote)
                 if not quote_price or quote_price <= 0:
                     continue
-                # Bitget exposes minTradeUSDT in USDT even for non-USDT quoted
-                # markets. Book.convert() expects min_notional in quote units.
-                min_notional_quote = number(item['minTradeUSDT']) / quote_price
+                try:
+                    min_notional_quote = number(item['minTradeUSDT']) / quote_price
+                    step = Decimal(10) ** -int(item['quantityPrecision'])
+                    minimum = number(item['minTradeAmount'])
+                    maximum = number(item['maxTradeAmount'])
+                    if step <= 0 or minimum < 0 or min_notional_quote < 0 or maximum <= 0:
+                        raise ValueError('invalid Bitget trading rule')
+                except (KeyError, ValueError, TypeError, InvalidOperation):
+                    continue
                 rules[f"{item['baseCoin']}-{quote}"] = (
-                    Decimal(10) ** -int(item['quantityPrecision']), number(item['minTradeAmount']),
-                    min_notional_quote, number(item['maxTradeAmount']))
+                    step, minimum, min_notional_quote, maximum)
         self.rules, self.rules_at = rules, time.time()
 
     def pairs(self):
@@ -153,7 +172,6 @@ class PublicFeed:
             sequence = str(data['sequence'])
         elif self.exchange == 'binance':
             data = self.get('/api/v3/depth', symbol=symbol, limit=20)
-            # REST response has no event timestamp. Request-start time is a conservative local age.
             stamp, sequence = requested, str(data['lastUpdateId'])
         else:
             data = self.get('/api/v2/spot/market/orderbook', symbol=symbol, type='step0', limit=20)
