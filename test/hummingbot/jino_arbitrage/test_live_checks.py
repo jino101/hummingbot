@@ -145,6 +145,29 @@ def test_live_readiness_fails_closed_on_withdrawal_permission_and_stale_networks
     assert any("stale" in reason for reason in report.reasons)
 
 
+@pytest.mark.parametrize('field', ['price', 'cap', 'base_balance', 'quote_balance'])
+@pytest.mark.parametrize('invalid', ['NaN', 'Infinity', '-Infinity'])
+def test_live_readiness_rejects_nonfinite_market_and_account_values(field, invalid):
+    now, permissions, networks, balances = _healthy_report_inputs()
+    price, cap = Decimal('100000'), Decimal('25')
+    if field == 'price':
+        price = Decimal(invalid)
+    elif field == 'cap':
+        cap = Decimal(invalid)
+    else:
+        balance = balances['binance']
+        balances['binance'] = BalanceSnapshot(
+            'binance', Decimal(invalid) if field == 'base_balance' else balance.base_available,
+            Decimal(invalid) if field == 'quote_balance' else balance.quote_available,
+        )
+    report = assess_live_readiness(
+        ['binance', 'kucoin'], 'BTC-USDT', cap, price,
+        {'binance': True, 'kucoin': True}, permissions, networks, balances, now,
+    )
+    assert report.ready is False
+    assert any('finite' in reason for reason in report.reasons)
+
+
 @pytest.mark.asyncio
 async def test_collect_live_readiness_uses_live_connectors_and_fails_closed_on_probe_errors():
     provider = MagicMock()

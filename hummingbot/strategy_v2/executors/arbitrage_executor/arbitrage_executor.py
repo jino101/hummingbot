@@ -193,7 +193,14 @@ class ArbitrageExecutor(ExecutorBase):
                 self.check_order_status()
 
     def early_stop(self, keep_position: bool = False):
-        self.close_type = CloseType.POSITION_HOLD if keep_position else CloseType.EARLY_STOP
+        # A stop must retain known exposure even when the caller did not request
+        # position holding. Cancellation requests do not confirm exchange state;
+        # late fills still require external reconciliation.
+        self._cancel_outstanding_orders()
+        self._held_position_orders = self._collect_held_position_orders()
+        self.close_type = (
+            CloseType.POSITION_HOLD if keep_position or self._held_position_orders else CloseType.EARLY_STOP
+        )
         self.stop()
 
     def check_order_status(self):
@@ -502,7 +509,10 @@ class ArbitrageExecutor(ExecutorBase):
     def _cancel_outstanding_orders(self):
         for tracked, market in ((self.buy_order, self.buying_market), (self.sell_order, self.selling_market)):
             if tracked.order_id and (not tracked.order or not tracked.order.is_done):
-                self._strategy.cancel(market.connector_name, market.trading_pair, tracked.order_id)
+                try:
+                    self._strategy.cancel(market.connector_name, market.trading_pair, tracked.order_id)
+                except Exception:
+                    self.logger().exception("Order cancellation failed; manual reconciliation required")
 
     def _collect_held_position_orders(self):
         held = []

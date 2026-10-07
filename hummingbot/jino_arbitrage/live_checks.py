@@ -16,7 +16,8 @@ def _d(value, default: Decimal = Decimal("0")) -> Decimal:
     if value is None or value == "":
         return default
     try:
-        return Decimal(str(value))
+        result = Decimal(str(value))
+        return result if result.is_finite() else default
     except Exception:
         return default
 
@@ -583,6 +584,12 @@ def assess_live_readiness(
 ) -> LiveReadinessReport:
     reasons = []
     base_asset, quote_asset = trading_pair.split("-")
+    valid_cap = total_amount_quote.is_finite() and total_amount_quote > 0
+    valid_price = asset_quote_price.is_finite() and asset_quote_price > 0
+    if not valid_cap:
+        reasons.append("trade cap must be positive and finite")
+    if not valid_price:
+        reasons.append("base/quote conversion price must be positive and finite")
 
     if len(connector_names) != 2 or connector_names[0] == connector_names[1]:
         reasons.append("exactly two different live connectors are required")
@@ -622,14 +629,19 @@ def assess_live_readiness(
         if balance is None:
             reasons.append(f"{name}: balance status unavailable")
         else:
-            if balance.quote_available < total_amount_quote:
+            valid_balances = (
+                balance.quote_available.is_finite() and balance.quote_available >= 0
+                and balance.base_available.is_finite() and balance.base_available >= 0
+            )
+            if not valid_balances:
+                reasons.append(f"{name}: balances must be nonnegative and finite")
+                continue
+            if valid_cap and balance.quote_available < total_amount_quote:
                 reasons.append(
                     f"{name}: insufficient {quote_asset} for configured trade cap "
                     f"({balance.quote_available} < {total_amount_quote})"
                 )
-            if asset_quote_price <= 0:
-                reasons.append("base/quote conversion price unavailable")
-            elif balance.base_available * asset_quote_price < total_amount_quote:
+            if valid_cap and valid_price and balance.base_available * asset_quote_price < total_amount_quote:
                 reasons.append(
                     f"{name}: insufficient {base_asset} for reverse arbitrage direction"
                 )

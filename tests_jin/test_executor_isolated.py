@@ -128,3 +128,32 @@ class ExecutorRegressionTests(unittest.IsolatedAsyncioTestCase):
         ex.process_order_failed_event(None,None,SimpleNamespace(order_id="sell"))
         self.assertEqual(ex.close_type,"POSITION_HOLD")
         self.assertEqual(ex._held_position_orders[0]["filled"],"0.4")
+
+    def test_early_stop_cancels_both_orders_and_retains_partial_fill(self):
+        ex=self.executor;ex.buy_order.order_id='buy';ex.sell_order.order_id='sell'
+        ex.buy_order.order=SimpleNamespace(executed_amount_base=D('0.4'),is_done=False,
+                                         to_json=lambda:{'id':'buy','filled':'0.4'})
+        ex.early_stop()
+        self.assertEqual(self.strategy.cancel.call_count,2)
+        self.strategy.cancel.assert_any_call('kucoin','ETH-USDT','buy')
+        self.strategy.cancel.assert_any_call('binance','ETH-USDC','sell')
+        self.assertEqual(ex.close_type,'POSITION_HOLD')
+        self.assertEqual(ex._held_position_orders,[{'id':'buy','filled':'0.4'}])
+        self.assertTrue(ex.is_closed)
+
+    def test_early_stop_without_fills_preserves_early_stop_reason(self):
+        self.executor.early_stop()
+        self.assertEqual(self.executor.close_type,'EARLY_STOP')
+        self.executor.early_stop(keep_position=True)
+        self.assertEqual(self.executor.close_type,'POSITION_HOLD')
+
+    def test_early_stop_retains_fills_when_one_cancellation_raises(self):
+        ex=self.executor;ex.buy_order.order_id='buy';ex.sell_order.order_id='sell'
+        ex.buy_order.order=SimpleNamespace(executed_amount_base=D('0.4'),is_done=False,
+                                         to_json=lambda:{'id':'buy','filled':'0.4'})
+        self.strategy.cancel.side_effect=[RuntimeError('offline'),None]
+        ex.early_stop()
+        self.assertEqual(self.strategy.cancel.call_count,2)
+        self.assertEqual(ex._held_position_orders,[{'id':'buy','filled':'0.4'}])
+        self.assertEqual(ex.close_type,'POSITION_HOLD')
+        self.assertTrue(ex.is_closed)

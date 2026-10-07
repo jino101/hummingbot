@@ -58,6 +58,41 @@ class TestArbitrageExecutor(IsolatedAsyncioWrapperTestCase, LoggerMixinForTest):
         self.assertTrue(self.executor.is_arbitrage_valid('ETH-USDT', 'WETH-USDT'))
         self.assertFalse(self.executor.is_arbitrage_valid('ETH-USDT', 'BTC-USDT'))
 
+    def test_early_stop_cancels_orders_and_retains_partial_fill(self):
+        buy_order = Mock()
+        buy_order.executed_amount_base = Decimal('0.4')
+        buy_order.is_done = False
+        buy_order.to_json.return_value = {'id': 'buy', 'filled': '0.4'}
+        self.executor.buy_order.order_id = 'buy'
+        self.executor.buy_order.order = buy_order
+        self.executor.sell_order.order_id = 'sell'
+
+        self.executor.early_stop()
+
+        self.strategy.cancel.assert_any_call('binance', 'POL-USDT', 'buy')
+        self.strategy.cancel.assert_any_call('uniswap_polygon_mainnet', 'WPOL-USDT', 'sell')
+        self.assertEqual(self.strategy.cancel.call_count, 2)
+        self.assertEqual(self.executor.close_type, CloseType.POSITION_HOLD)
+        self.assertEqual(self.executor.get_custom_info()['held_position_orders'], [{'id': 'buy', 'filled': '0.4'}])
+        self.assertEqual(self.executor.status, RunnableStatus.TERMINATED)
+
+    def test_early_stop_retains_fills_when_one_cancellation_raises(self):
+        buy_order = Mock()
+        buy_order.executed_amount_base = Decimal('0.4')
+        buy_order.is_done = False
+        buy_order.to_json.return_value = {'id': 'buy', 'filled': '0.4'}
+        self.executor.buy_order.order_id = 'buy'
+        self.executor.buy_order.order = buy_order
+        self.executor.sell_order.order_id = 'sell'
+        self.strategy.cancel.side_effect = [RuntimeError('offline'), None]
+
+        self.executor.early_stop()
+
+        self.assertEqual(self.strategy.cancel.call_count, 2)
+        self.assertEqual(self.executor.close_type, CloseType.POSITION_HOLD)
+        self.assertEqual(self.executor.get_custom_info()['held_position_orders'], [{'id': 'buy', 'filled': '0.4'}])
+        self.assertEqual(self.executor.status, RunnableStatus.TERMINATED)
+
     def test_net_pnl_quote(self):
         self.executor.close_type = CloseType.COMPLETED
         self.executor._buy_order = Mock(spec=TrackedOrder)
