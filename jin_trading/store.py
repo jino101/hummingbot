@@ -51,17 +51,22 @@ class Store:
         if total <= 0 or total > Decimal('1000000'):
             raise ValueError('Initial paper budgets must total more than 0 and at most 1,000,000 USDT')
         with self.connect() as db:
+            configured=self._get(db,'configured_budgets')
+            parsed={bot:str(number(value)) for bot,value in budgets.items()}
+            if configured and {bot:number(value) for bot,value in json.loads(configured).items()}!={bot:number(value) for bot,value in parsed.items()}:
+                raise ValueError('Budget edits require a migration, not a restart')
             for bot, budget in budgets.items():
                 if number(budget) <= 0:
                     raise ValueError('Budget must be positive')
                 db.execute('INSERT OR IGNORE INTO bots(id,capital,initial) VALUES (?,?,?)',
                            (bot, str(budget), str(budget)))
                 row = db.execute('SELECT initial FROM bots WHERE id=?', (bot,)).fetchone()
-                if number(row[0]) != number(budget):
+                if not configured and number(row[0]) != number(budget):
                     raise ValueError('Budget edits require a migration, not a restart')
             actual = {r[0] for r in db.execute('SELECT id FROM bots')}
             if actual != set(budgets):
                 raise ValueError('Bot list changed; migrate the ledger explicitly')
+            self._setting(db,'configured_budgets',json.dumps(parsed))
 
     def reset_budgets(self, budgets):
         """Explicit PAPER-only migration: reset virtual balances/trades and stop bots."""
@@ -88,12 +93,23 @@ class Store:
             for bot, budget in parsed.items():
                 db.execute('INSERT INTO bots(id,capital,initial,enabled,status) VALUES (?,?,?,?,?)',
                            (bot, str(budget), str(budget), 0, '{}'))
-            db.execute("DELETE FROM settings WHERE key IN ('day','baseline','reason')")
+            db.execute("DELETE FROM settings WHERE key IN ('day','baseline','reason','actual_allocation_initialized')")
+            self._setting(db,'configured_budgets',json.dumps({b:str(v) for b,v in parsed.items()}))
             self._setting(db, 'halt', '0')
         # Establish today's fresh baseline immediately.
         self.snapshot()
 
     def _risk(self, db, now):
+        # The real/demo account ledger owns its marked equity and daily baseline.
+        # Configuration weights in this UI table must not create another baseline.
+        if self._account_mode(db):
+            row=db.execute("SELECT value FROM portfolio_settings WHERE key='halt'").fetchone()
+            if row and row[0]=='1':
+                self._setting(db,'halt','1')
+                reason=db.execute("SELECT value FROM portfolio_settings WHERE key='reason'").fetchone()
+                self._setting(db,'reason',reason[0] if reason else 'Account portfolio stopped')
+                db.execute('UPDATE bots SET enabled=0')
+            return self._get(db, 'halt') == '1'
         day = datetime.fromtimestamp(now, ZoneInfo('Europe/Berlin')).date().isoformat()
         total = self._total(db)
         if self._get(db, 'day') != day:
@@ -105,6 +121,13 @@ class Store:
             self._setting(db, 'reason', '10% daily loss limit')
             db.execute('UPDATE bots SET enabled=0')
         return self._get(db, 'halt') == '1'
+
+    @staticmethod
+    def _account_mode(db):
+        if not db.execute("SELECT 1 FROM sqlite_master WHERE name='portfolio_settings'").fetchone():
+            return False
+        row=db.execute("SELECT value FROM portfolio_settings WHERE key='mode'").fetchone()
+        return bool(row and row[0] in ('live','demo'))
 
     def control(self, bot, enabled):
         blocked = False
@@ -129,6 +152,11 @@ class Store:
         blocked = False
         with self.connect() as db:
             db.execute('BEGIN IMMEDIATE')
+            if self._account_mode(db):
+                if db.execute("SELECT value FROM portfolio_settings WHERE key='halt'").fetchone()[0]=='1':
+                    raise ValueError('Reset the account portfolio first')
+                self._setting(db,'halt','0');self._setting(db,'reason','')
+                return
             self._risk(db, time.time())
             baseline = number(self._get(db, 'baseline'))
             if self._total(db) <= baseline * Decimal('0.90'):
@@ -152,9 +180,22 @@ class Store:
 
     def mark_equity(self, bot, equity):
         """Capital follows the durable wallet, including marked held inventory."""
+        self.mark_equities({bot:equity})
+
+    def mark_equities(self, equities, initialize_actual=False):
+        """Publish an entire allocation in one transaction, without transient losses."""
+        values={bot:number(equity) for bot,equity in equities.items()}
+        if any(value<0 for value in values.values()):raise ValueError('Negative allocation')
         with self.connect() as db:
             db.execute('BEGIN IMMEDIATE')
-            db.execute('UPDATE bots SET capital=? WHERE id=?',(str(number(equity)),bot))
+            initial=initialize_actual and self._get(db,'actual_allocation_initialized')!='1'
+            if initial and set(values)!={r[0] for r in db.execute('SELECT id FROM bots')}:
+                raise ValueError('Initial allocation requires all bots')
+            for bot,equity in values.items():
+                result=db.execute('UPDATE bots SET capital=? WHERE id=?',(str(equity),bot))
+                if not result.rowcount:raise ValueError('Unknown bot')
+                if initial:db.execute('UPDATE bots SET initial=? WHERE id=?',(str(equity),bot))
+            if initial:self._setting(db,'actual_allocation_initialized','1')
             self._risk(db,time.time())
 
     def record_execution(self, bot, opportunity, result):

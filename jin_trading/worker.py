@@ -19,8 +19,12 @@ from jin_trading.strategies import Signals, STRATEGIES
 def load_config(path):
     with open(path) as stream:
         config = json.load(stream)
-    if config.get('mode') != 'paper':
-        raise ValueError('Only paper mode is implemented; live orders are unavailable')
+    return validate_config(config)
+
+
+def validate_config(config, mode='paper'):
+    if config.get('mode') != mode:
+        raise ValueError('Configuration mode does not match this entry point')
     if not 2 <= float(config.get('poll_seconds', 5)) <= 60:
         raise ValueError('Polling interval must be 2–60 seconds')
     if not 0 < number(config['max_deploy_fraction']) <= Decimal('0.5'):
@@ -53,6 +57,8 @@ def load_config(path):
             if not spec.get('pair'):raise ValueError('Directional strategy requires a pair')
             Signals(strategy,**spec.get('signal',{}))
         if strategy=='cross_exchange':raise ValueError('Configure cross-exchange execution through the prefunded execution API')
+        if number(spec['budget'])<=0:raise ValueError('Bot budget must be positive')
+    if not config['bots']:raise ValueError('At least one bot required')
     return config
 
 
@@ -66,7 +72,7 @@ class Worker:
         self.portfolio=Portfolio(store.path)
         self.portfolio.register(config['bots'])
         self.brokers={bot:PaperBroker(self.portfolio,bot,{},spec['budget']) for bot,spec in config['bots'].items()}
-        self.engine=ExecutionEngine(self.portfolio,self.brokers,config['max_age'],number(config['slippage']))
+        self.engine=ExecutionEngine(self.portfolio,self.brokers,config['max_age'],number(config['slippage']),config['min_profit'])
         for bot,broker in self.brokers.items():
             try:self.store.mark_equity(bot,broker.sync())
             except ValueError:self.portfolio.invalidate_account(bot)

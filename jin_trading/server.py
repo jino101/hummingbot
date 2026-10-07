@@ -64,7 +64,10 @@ class Handler(BaseHTTPRequestHandler):
         if self.server.worker:
             portfolio=self.server.worker.portfolio.snapshot()
             state['portfolio']=portfolio
+            state['mode']=portfolio['mode']
+            state['live_available']=portfolio['mode']=='live'
             state['capital']=portfolio['equity']
+            state['baseline']=portfolio['baseline']
             state['halt']=state['halt'] or portfolio['halt']
             if portfolio['reason']:state['reason']=portfolio['reason']
             state['universe']=self.server.worker.universe_status
@@ -73,7 +76,8 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_GET(self):
         if self.path=='/healthz':
-            self.send(200,{'service':'jin','mode':'paper'});return
+            mode=self.server.worker.portfolio.mode if self.server.worker else 'paper'
+            self.send(200,{'service':'jin','mode':mode});return
         assets = {'/': ('dashboard.html', 'text/html; charset=utf-8'),
                   '/dashboard.js': ('dashboard.js', 'application/javascript'),
                   '/dashboard.css': ('dashboard.css', 'text/css')}
@@ -135,6 +139,11 @@ class Handler(BaseHTTPRequestHandler):
             elif self.path=='/api/reconcile':
                 if not self.server.worker:raise ValueError('Worker unavailable')
                 self.send(200,self.server.worker.engine.reconcile());return
+            elif self.path.startswith('/api/runs/') and self.path.endswith('/accept-reconciled-inventory'):
+                parts=self.path.split('/')
+                if len(parts)!=5 or not self.server.worker:raise ValueError('Unknown execution')
+                self.server.worker.portfolio.settle_held(unquote(parts[3],errors='strict'),
+                    'ACCEPT_RECONCILED_INVENTORY')
             else:
                 parts = self.path.split('/')
                 if len(parts) != 5 or parts[1:3] != ['api', 'bots'] or parts[4] not in ('start', 'stop'):

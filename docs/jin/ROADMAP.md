@@ -1,108 +1,84 @@
 # JIN Trading Roadmap
 
-Stand: **7. Oktober 2026**. Projekt `jino101/hummingbot`, Arbeitszweig
-`feat/jin-trading-control`, Entwurfs-[PR #2](https://github.com/jino101/hummingbot/pull/2).
-Diese Reihenfolge basiert auf der [Codeprüfung](AUDIT-2026-10-07.md).
+Stand: **7. Oktober 2026** · [PR #2](https://github.com/jino101/hummingbot/pull/2)
+· Arbeitszweig `feat/jin-trading-control`.
+Ziel: 5 echte USDT auf KuCoin, mehrere Bots, gemeinsame 10%-Tagesverlust-Stopregel,
+Bedienung am Galaxy S24; später Cross-Exchange, Aktien und Forex.
+**100 USDT im Standardbeispiel sind virtuelles Paper-Kapital.**
 
-Ziel: zunächst 5 USDT auf KuCoin, mehrere zentral begrenzte Bots, maximal 10 %
-Tagesverlust als Stop-Regel, Smartphone-Bedienung, danach weitere Strategien,
-Aktien und Forex. Kapital und Handelsbarkeit vor Echtgeldbetrieb prüfen.
+„Implementiert“ bezeichnet geprüften Code. Eine externe Abnahme erfordert den
+benannten Konto-/Betriebstest und ist damit noch nicht automatisch bestanden.
 
-## 0 — Grundlage: vorhanden
+```mermaid
+flowchart TD
+    A["Journal und Paper geprüft"] --> B["KuCoin nur lesen: 5 USDT"]
+    A --> C["Host und Handy verbinden"]
+    B --> D["24 Stunden Paper und Recovery"]
+    C --> D
+    D --> E["Begrenzte Live-Abnahme"]
+    D --> F["Cross-Exchange und Broker-Demo"]
+    F --> G["Weitere Strategien abnehmen"]
+```
 
-- [x] Eigenen Hummingbot-Controller, Beobachtung, Readonly-Prüfungen und Android-Quellen erhalten.
-- [x] Unterstützten aktiven USDT-Katalog und erreichbare USDT-Dreiecke automatisch erkennen.
-- [x] Route-komplette REST-Batches ohne feste Gesamt-Coin-Grenze rotieren; Cooldown und Abdeckung anzeigen.
-- [x] Bitget-Mindestnotional für Nicht-USDT-Quotes umrechnen, fehlende Umrechnung ausschließen.
-- [x] Mehrere Paper-Bots, gemeinsame virtuelle 5 USDT, Reinvestition, Not-Aus und 10-%-Tagesregel.
-- [x] Dashboard, Recording/Replay, Docker-Build und Compose-Konfiguration.
-- [x] Stop fordert Orderstornierung an und behält bekannte Füllungen; nicht endliche Live-Eingaben blockieren.
+## Implementierung und verbleibende Abnahmen
 
-Abnahmebeleg nach Sicherheitskorrekturen: **212 native Tests, 46 Paper-unittests,
-44 Pure-/Mobile-Tests und Docker-Checks grün**, **89 % Coverage** für `jin_trading`.
-Zwölf ungültige Eingabeszenarien geprüft; GitHub-Checks im Audit verlinkt.
-
-## 1 — P0: Orderaufsicht und gemeinsames reales Risiko
-
-- [ ] **R01 / F03:** Not-Aus erzeugt Stop-Actions für aktive Executor; Stornierungsbestätigungen,
-  späte Füllungen und unbekannte Orders dauerhaft abgleichen.
-- [ ] **R02 / F04:** Gemeinsame reale Equity, Gebühren, gehaltene Positionen und reserviertes
-  Kapital über alle Bots/Konten führen; 10-%-Grenze mit einheitlichem Tageswechsel.
-- [ ] **R03 / F05:** Tatsächliches Orderbuchalter vor Signal und Order prüfen; Reconnect-Lücken blockieren.
-
-**Fertig, wenn:** Teilfüllung, Ordertimeout, Netzwerkabbruch, doppeltes Event,
-Not-Aus und Neustart getestet sind; keine zweite Instanz dasselbe Kapital einsetzen
-kann; gehaltene Verluste in der globalen Equity erscheinen.
-
-## 2 — P1: belastbare Kurse und 5-USDT-Machbarkeit
-
-- [ ] **R04 / F06–F08:** Bitget-Referenzkurs-Alter und Mindestnotional absichern;
-  langsame Börsen isolieren; Gebühren pro Leg samt Flat Fees korrekt bewerten.
-- [ ] **R05 / F09:** Tokenidentität, Netzwerke, Mindesttransfer, Empfangsdaten und
-  Kapitalrückweg prüfen; authentifizierten Readonly-Adapter für Bitget ergänzen.
-- [ ] **R06:** KuCoin-Konto lokal nur lesend verbinden; verfügbare 5 USDT,
-  persönliche Gebühren und alle drei Mindestorders einer Route dokumentieren.
-- [ ] **R07:** Automatische WebSocket-Subscriptions in Shards, Reconnect und
-  Snapshot/Diff-Abgleich; Kataloggröße, Datenalter und Wiederbesuchszeiten messen.
-
-**Fertig, wenn:** Vollständiger API-Katalogumlauf protokolliert; jede Route hat
-frische Daten und korrekte Mindestmengen/Kosten. Ergebnis darf auch sein:
-„Mit 5 USDT ist derzeit keine Route ausführbar.“ Keine Mindestgrenze umgehen.
-
-## 3 — P1: ein Dashboard und dauerhafter Paper-Betrieb
-
-- [ ] **R08 / F12–F13:** Vorhandene Sites-Oberfläche an dieselbe authentifizierte
-  Bot-API anbinden; Coin-Katalog, Ledger und Risikostatus serverseitig teilen.
-- [ ] **R09 / F10/F15:** Risiko-Latch bei abgewiesenem Start/Reset dauerhaft
-  speichern; Sonderzeichen-IDs, ungültige Beobachtungsdaten, Export und Log-Schreiber absichern.
-- [ ] **R10 / F14:** Host festlegen: eigener Linux-Rechner oder Replit Reserved VM
-  nach Prüfung von Kosten, Region, API-Erreichbarkeit und Datenhaltung.
-- [ ] **R11 / F14:** HTTPS/VPN, Autostart, Sicherung/Wiederherstellung, Zustandsalarm
-  und Galaxy-Test; Android-CI passend zum Arbeitszweig und signierte Release-APK.
-
-**Fertig, wenn:** 24 Stunden Paper-Betrieb mit dokumentierten API-Fehlern läuft;
-nach Neustart stimmen Ledger/Not-Aus; zwei Geräte sehen denselben Zustand;
-veraltete Chancen lassen sich nicht ausführen; eine Sicherung wurde zurückgespielt.
-
-## 4 — P1: Live-Ausführung nach bestandenen Grundlagen
-
-- [ ] **R12 / F11:** Drei-Leg-Executor mit Füllmengen, Restbeständen,
-  Gebührenwährung, Fristen, Abbruch und Recovery implementieren.
-- [ ] **R13:** Bestehenden Cross-Exchange-Executor an Supervisor und zentrale
-  Kapitalreservierung anbinden; bekannte Fill-Mengen statt ursprünglicher Menge verwenden.
-- [ ] **R14:** Sandbox-/Demotests und danach dokumentierten, gesondert
-  freigegebenen begrenzten Echtgeldtest durchführen.
-
-**Voraussetzung:** R01–R11 bestanden, handelbares Mindestkapital nachgewiesen und
-Konten lokal verbunden. Diese Roadmap erteilt keine Freigabe für echte Orders.
-
-## 5 — P2/P3: Wachstum, weitere Strategien, Aktien und Forex
-
-- [ ] **R15 / F16:** Konfigurierbare Kapitalstufen für 5/10/weitere USDT;
-  Einsatz und Reservierung wachsen innerhalb derselben globalen Risikogrenze.
-- [ ] **R16 / F16:** Market-Making/direktionale Strategien individuell konfigurieren,
-  parallel mit Kosten/Slippage testen und zentral stoppen können.
-- [ ] **R17 / F17:** Aktien-/Forex-Broker auswählen; Daten-/Orderadapter,
-  Handelszeiten, Währungen, Lotgrößen, Gebühren und Demokonto-Prüfungen ergänzen.
-- [ ] **R18 / F17:** Daten-/Order-Latenz und Lasttests messen; Infrastruktur
-  und Kosten vor Bewerbung eines niedrigen Latenzmodus prüfen.
-
-**Fertig, wenn:** Neue Strategie/Broker hat nachvollziehbare Daten- und
-Ausführungstests und kann die gemeinsame Risikogrenze nicht umgehen.
-
-## Plugin-Status und konkrete nächste Arbeit
-
-| Werkzeug | Geprüft | Nächster Einsatz |
+| ID | Stand | Ergebnis und nächste Abnahme |
 |---|---|---|
-| GitHub | Vorhandener PR, Code und CI; Issues deaktiviert | Arbeitsliste im PR und dieser Roadmap weiterführen |
-| Composio | Tools gesucht, keine aktive GitHub-Verbindung darin | Nach Verbindung GitHub-/Aufgaben-Workflows; Alarmziel erst festlegen |
-| Replit | Keine vorhandene App gefunden | Host für denselben Code; Reserved VM prüfen |
-| Sites | Vorhandene private JIN-Site samt eigenem Quellcode geprüft | Gemeinsame API statt browserlokaler 10-USDT-/10-Coin-Demo |
-| Visualize | Phasenübersicht aus dieser Arbeitsliste | Offene Abnahmekriterien sichtbar halten |
+| R01 | Implementiert; Kontoabnahme offen | Aktive Stop-Actions, dauerhafte Client-IDs, Füllmengen, unbekannte Orders, Cancel/Abgleich, manuelle Restbestandsannahme. Reale Cancel-Bestätigung und späte Börsenfills prüfen. |
+| R02 | Implementiert; Kontoabnahme offen | Globale reale Equity, Bestandsbewertung, Reservierung und Tages-Latch. Mehrere Bots auf einem Konto zählen Equity einmal. Konten-/Cashflow-Abnahme durchführen. |
+| R03 | Implementiert; Soak offen | Echte Hummingbot-Tracker-Zeitstempel, Sequenz-/Reconnect-Schutz und erneute Frischeprüfung vor Order. Börsen-Datenalter 24 Stunden messen. |
+| R04 | Implementiert | Frische Bitget-Quote-Umrechnung, voneinander getrennte Anbieter, Gebühren pro Leg/Flat Fees. Fehlende Transfergebühren gelten als unbekannt. |
+| R05 | Teilweise; Live-Cross gesperrt | Authentifizierte Spot-/Berechtigungsadapter für alle drei Börsen vorhanden. Tokenidentität, Transferminimum, Empfangsdaten, Memo und Rückweg noch strikt belegen. Keine automatischen Transfers. |
+| R06 | Werkzeug fertig; Konto fehlt | Nur lesender 5-USDT-Check. Verfügbare KuCoin-Bestände, persönliche Gebühren und drei Mindestorders mit lokalen Schlüsseln dokumentieren; Ergebnis darf „keine handelbare Route“ sein. |
+| R07 | Implementiert; Soak offen | Dynamische WebSocket-Kataloge, begrenzte Rotation, Deduplizierung und Reconnect. Reale Abdeckung, Wiederbesuchszeit, Last und Datenalter messen. |
+| R08 | Implementiert und privat veröffentlicht | Sites-Oberfläche nutzt denselben Status, Risiko und Orderabgleich; keine Browser-Wallet. Noch keinen erreichbaren eigenen Bot-Host verbunden; Galaxy-Abnahme offen. |
+| R09 | Implementiert | Latch bleibt nach abgewiesenem Start/Reset gespeichert; sichere IDs, Beobachtungsprüfung, vollständige CSV, atomare Log-/Snapshot-Schreiber. |
+| R10 | Externe Entscheidung offen | Kleinen Linux-VPS oder passende ständig laufende Replit-Deployment-Art wählen. Kosten, Region, API-Erreichbarkeit und dauerhafte Daten prüfen; noch kein Host bestellt. |
+| R11 | Teilweise | Docker-Neustart, Liveness, lokale Health-Prüfung sowie Online-Backup/Restore implementiert. HTTPS/VPN, unabhängiger Alarm, Restore auf Zielhost, zwei Geräte und signierte optionale Android-Release fehlen. |
+| R12 | Implementiert; Live-Abnahme offen | Drei Leg-IOC mit vollständigem Preflight, tatsächlichen Fills, Gebühren und Recovery. Separater lokaler Live-Dienst, Standard bleibt Paper. Reale Kontoausführung nicht getestet. |
+| R13 | Teilweise; Implementierung offen | Vorfinanzierte Cross-Exchange-Ausführungs-API mit gemeinsamer Reservierung getestet. Automatische Cross-Bot-Konfiguration, Identitätsprüfung, Inventarausgleich und native Executor-Anbindung fehlen; Echtgeld blockiert. |
+| R14 | Externe Abnahme offen | Broker-/Börsen-Demo, Netzwerkunterbrechung, Restart/Cancel und danach ausdrücklich begrenzte Live-Abnahme mit lokal verbundenem Konto. |
+| R15 | Implementiert | Stufen 5/10/25/50/100/250/500/1.000; absolute Budgets wachsen, Prozentgrenzen bleiben. Ein-/Auszahlungen sind nicht als Cashflow bereinigt. |
+| R16 | Teilweise | Paper-Momentum, Grid, Mean Reversion mit gemeinsamen Grenzen; parallele Ausführung möglich. Strategien je Markt mit Kosten/Slippage prüfen; echtes Market-Making und deren Live-Freigabe fehlen. |
+| R17 | Teilweise; Implementierung offen | Alpaca-Paper- und OANDA-Practice-Transporte samt Client-IDs/festen Demo-Hosts vorhanden. Brokerwahl, Demo-Journal, USD/FX, Handelskalender, Lots und vollständige Daten-/Order-Abnahme fehlen. |
+| R18 | Messung offen | Noch kein realer Latenz-/Last-/Kostenbeleg. Kein institutionelles HFT oder zugesicherter Gewinn. |
 
-**Nächster konkreter Implementierungsschritt:** R01–R03: aktive Orders stoppen und
-abgleichen, reale Portfoliorisiken gemeinsam führen, tatsächliches Buchalter prüfen.
-Parallel R06/R10: nur lesender KuCoin-Machbarkeitsbericht und erreichbarer Paper-Host.
+## Konkrete nächste Aufgaben
 
-Benötigte externe Angaben: ausgewählter Host und später Broker; Kontoverbindung
-erfolgt lokal. Zugangsdaten gehören nicht in Chat, GitHub oder Browsercode.
+1. **P0: KuCoin-Readonly-Abnahme (R06).** Zugangsdaten lokal mit erlaubten Rechten
+   verbinden, verfügbares Kapital und Gebühren festhalten, ausführbare Dreiecke mit
+   höchstens 2,5 USDT Einsatz nachweisen. Kein Ergebnis erzwingen.
+2. **P0: Eigenen Host verbinden (R10/R11).** HTTPS oder privates VPN, dauerhafte
+   SQLite-Datei, Autostart und unabhängige Zustandsüberwachung; Smartphone verbindet
+   die bestehende Site. Entwicklungs-Vorschau reicht nicht als 24/7-Beleg.
+3. **P0: 24-Stunden-Paper-Abnahme (R01–R03/R07/R11).** Zwei Clients, Not-Aus,
+   API-Ausfall, Neustart und Restore dokumentieren. Keine Doppelorder, keine
+   freigegebene unbekannte Exposition, identischer Zustand auf beiden Geräten.
+4. **P1: Cross-Exchange vervollständigen (R05/R13).** Identität und vorfinanzierte
+   Bestände strikt prüfen; beide Leg-Größen reservieren, Wiederherstellung und
+   nötigen Inventarausgleich dokumentieren; bestehende native Instanz migrieren.
+5. **P1: Aktien-/Forex-Demo vervollständigen (R17).** Broker und Markt auswählen;
+   getrennte Demo-Datenbank, Währungsbewertung, Kalender/Lots und normalisierte
+   Order-/Fill-Ereignisse in denselben Supervisor integrieren und abnehmen.
+6. **P1: Begrenzte Live-Abnahme (R12/R14).** Erst nach erfolgreichem Mindestkapital-
+   und Recovery-Test lokal aktivieren. Drei Legs, Fees, Restbestand, Cancel und
+   Neustart auf dem tatsächlichen Konto dokumentieren.
+7. **P2: Strategien und Latenz (R16/R18).** Kostenbereinigte Paper-Auswertung,
+   Walk-forward-Tests, Lastmessungen und Betriebsbudget; daraus Freigaben ableiten.
+
+## Plugins und Aufgaben
+
+| Werkzeug | Nutzung / Stand |
+|---|---|
+| GitHub | Bestehender Code zusammengeführt, Entwurfs-PR aktualisiert, native und Paper-CI. Repository-Issues sind deaktiviert; Arbeitsliste hier und im PR. |
+| Context7 | Aktuelle Hummingbot-/CCXT-Schnittstellen abgeglichen; SDK 4.5.85 festgelegt. |
+| Composio | GitHub-Werkzeuge gefunden; Verbindung gesondert autorisieren. Direkte GitHub-Verbindung funktioniert bereits. |
+| Sites | Bestehende private Bot-Zentrale veröffentlicht, gemeinsamer API-Status, Orderjournal und Restbestandsannahme. |
+| Replit | Alternative App/Hosting-Vorbereitung für denselben GitHub-Code; Status im Gespräch prüfen. Noch kein 24/7-Host abgenommen. |
+| Template Creator | Wiederverwendbare Vorlage der mobilen Bot-Zentrale; keine Kontoschlüssel oder Site-Identität übernehmen. |
+| Pets | Codex-Begleiter ausgewählt. |
+| Aufgabe erstellen | Bestehende Aufgabe „JIN Roadmap prüfen“ weiterverwenden; keine zweite Erinnerung anlegen. |
+
+[Anleitung und konkrete Start-/Prüfschritte](README.md).
+Zugangsdaten nicht in Chat, GitHub oder Frontend eintragen. Offene Kontoverbindungen
+und Betriebsabnahmen sind keine durchgeführten Echtgeldtests.

@@ -92,6 +92,21 @@ class ServerTests(unittest.TestCase):
         with self.request('/api/bots/bot/start','POST') as response:self.assertEqual(response.status,200)
         with self.request('/api/halt','POST') as response:self.assertTrue(json.load(response)['portfolio']['halt'])
 
+    def test_inventory_acceptance_requires_terminal_orders_and_keeps_latch(self):
+        from jin_trading.worker import Worker,load_config
+        config=load_config('jin_trading/config.5usdt.json');config['bots']={'bot':{'exchange':'kucoin','budget':'5'}}
+        self.server.worker=Worker(self.store,config);portfolio=self.server.worker.portfolio
+        run=portfolio.reserve('bot',[('bot','USDT','1','1')])
+        client=portfolio.prepare(run,'bot','A-USDT','buy','1','1')
+        portfolio.submitting(client);portfolio.unknown(client,'response missing');portfolio.finish(run,False,'unknown')
+        path='/api/runs/'+run+'/accept-reconciled-inventory'
+        with self.assertRaises(HTTPError):self.request(path,'POST')
+        portfolio.observe(client,{'id':'exchange','status':'closed','filled':'1','cost':'1',
+                                 'fees':[{'currency':'USDT','cost':'.001'}]})
+        with self.request(path,'POST') as response:self.assertTrue(json.load(response)['halt'])
+        self.assertEqual(portfolio.orders(True),[])
+        with self.request('/api/reset','POST') as response:self.assertFalse(json.load(response)['halt'])
+
     def test_existing_snapshot_and_emergency_bridge(self):
         observation=Path(self.tmp.name)/'observation.json'
         kill=Path(self.tmp.name)/'runtime.kill'

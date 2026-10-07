@@ -73,6 +73,19 @@ class ExecutionTests(unittest.TestCase):
         self.assertEqual(self.portfolio.orders(),[])
         self.assertEqual(self.portfolio.snapshot()['runs'][0]['state'],'completed')
 
+    def test_third_leg_minimum_is_checked_before_any_order(self):
+        self.books['B-USDT']=book('B-USDT','1.2','1.21',minimum='100')
+        with patch.object(self.a,'submit',wraps=self.a.submit) as submit:
+            with self.assertRaises(ValueError):self.route()
+            submit.assert_not_called()
+        self.assertFalse(self.portfolio.snapshot()['halt'])
+        self.assertEqual(self.portfolio.orders(),[])
+
+    def test_live_cross_requires_asset_identity_and_rebalance_proof(self):
+        live=Portfolio(Path(self.tmp.name)/'cross-live.sqlite','live')
+        with self.assertRaisesRegex(ValueError,'asset identity'):
+            ExecutionEngine(live,{}).cross('bot','buy','sell','A-USDT','1')
+
     def test_concurrent_reservations_share_ceiling(self):
         def reserve(account):
             try:return self.portfolio.reserve(account,[(account,'USDT',2,2)])

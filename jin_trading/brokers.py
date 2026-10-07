@@ -5,6 +5,7 @@ operator's environment. Importing it performs no network or trading action.
 """
 import json
 import time
+from dataclasses import replace
 from decimal import Decimal
 from urllib.parse import quote, urlencode
 from urllib.request import Request, urlopen
@@ -25,8 +26,8 @@ class SpotBroker:
         verified=self.verified_fees.get(pair)
         if self.armed and (not verified or not 0<=time.time()-verified[0]<=120):
             raise ValueError('Fresh verified account fee required')
-        if verified:self.feed.fee=verified[1]
-        return self.feed.book(pair)
+        book=self.feed.book(pair)
+        return replace(book,fee=verified[1]) if verified else book
 
     def submit(self,client_id,pair,side,quantity,price):
         if not self.armed:raise ValueError('Live adapter is not armed')

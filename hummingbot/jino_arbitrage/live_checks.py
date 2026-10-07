@@ -109,7 +109,16 @@ class LiveReadinessReport:
     common_rebalance_networks: Tuple[str, ...] = ()
 
 
-def _fee_in_quote(fee_asset: Decimal, asset_quote_price: Decimal) -> Decimal:
+def _withdrawal_fee(value) -> Optional[Decimal]:
+    if value is None or value=='':return None
+    try:
+        fee=Decimal(str(value))
+        return fee if fee.is_finite() and fee>=0 else None
+    except Exception:return None
+
+
+def _fee_in_quote(fee_asset: Optional[Decimal], asset_quote_price: Decimal) -> Optional[Decimal]:
+    if fee_asset is None:return None
     if fee_asset <= 0:
         return Decimal("0")
     if asset_quote_price <= 0:
@@ -130,7 +139,7 @@ def parse_binance_network_statuses(
 
     result = []
     for network in coin.get("networkList", []) or []:
-        fee_asset = _d(network.get("withdrawFee"))
+        fee_asset = _withdrawal_fee(network.get("withdrawFee"))
         result.append(
             NetworkStatus(
                 network=str(network.get("network") or network.get("name") or ""),
@@ -174,7 +183,7 @@ def parse_kucoin_network_statuses(
 
     result = []
     for chain in chains:
-        fee_asset = _d(
+        fee_asset = _withdrawal_fee(
             chain.get("withdrawalMinFee")
             if chain.get("withdrawalMinFee") is not None
             else chain.get("withdrawMinFee")

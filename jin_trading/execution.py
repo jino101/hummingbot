@@ -30,9 +30,11 @@ def order_size(book, source, amount, slippage=Decimal('.001')):
 
 
 class ExecutionEngine:
-    def __init__(self, portfolio, brokers, max_age=3, slippage=Decimal('.001')):
+    def __init__(self, portfolio, brokers, max_age=3, slippage=Decimal('.001'), min_profit=Decimal('0')):
         self.portfolio,self.brokers=portfolio,brokers
         self.max_age,self.slippage=max_age,number(slippage)
+        self.min_profit=number(min_profit)
+        if not 0<=self.min_profit<1:raise ValueError('Invalid execution profit threshold')
 
     def submit(self, run, account, pair, side, quantity, price):
         broker=self.brokers[account]
@@ -54,6 +56,17 @@ class ExecutionEngine:
         run=self.portfolio.reserve(bot,[(account,source,amount,amount)],run_id)
         current=amount
         try:
+            # Prove the full route and every minimum before exposing the first leg.
+            preview,asset,observations=amount,'USDT',[]
+            for pair in pairs:
+                book=self.brokers[account].book(pair);observations.append(book)
+                order_size(book,asset,preview,self.slippage)
+                asset,preview=book.convert(asset,preview/(1+book.fee),self.slippage)
+            if asset!='USDT':raise ValueError('Route did not return to USDT')
+            if any(not 0<=time.time()-b.timestamp<=self.max_age for b in observations):
+                raise ValueError('Stale preflight route')
+            if self.portfolio.mode=='live' and preview<=amount*(1+self.min_profit):
+                raise ValueError('Verified live route does not meet the profit threshold')
             for pair in pairs:
                 book=self.brokers[account].book(pair)
                 if not 0<=time.time()-book.timestamp<=self.max_age:raise ValueError('Stale order book')
@@ -83,6 +96,8 @@ class ExecutionEngine:
         journalled separately; a partial/uncertain first leg stops the second.
         """
         quantity=number(quantity)
+        if self.portfolio.mode=='live':
+            raise ValueError('Live cross-exchange requires verified asset identity and inventory-rebalance acceptance')
         if buy_account==sell_account or quantity<=0:raise ValueError('Two accounts and positive quantity required')
         buy=self.brokers[buy_account].book(pair);sell=self.brokers[sell_account].book(pair)
         if buy.assets!=sell.assets or buy.assets[1]!='USDT':raise ValueError('USDT market required')

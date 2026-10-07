@@ -29,6 +29,7 @@ def check(client,feed,amount='5',db_path='data/jin-live.sqlite'):
             if route.kind=='triangular':feasible.append({'route':route.route,'input':str(route.input_amount),
                                                         'estimated_profit':str(route.profit)})
     return {'mode':'read-only','account':account,'checked_pairs':len(feed.pairs()),'feasible':feasible,'errors':errors,
+            'fee_assumption':str(feed.fee),'personal_fees_verified':False,
             'reason':'A positive estimate is not proof of executable profit; no order was submitted'}
 
 

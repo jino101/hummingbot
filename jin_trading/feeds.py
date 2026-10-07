@@ -5,6 +5,8 @@ Fee assumptions are configuration values, not verified account-specific fees.
 """
 import json
 import time
+import threading
+from functools import wraps
 from decimal import Decimal, InvalidOperation
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
@@ -15,6 +17,13 @@ from jin_trading.arbitrage import Book, number
 HOSTS = {'kucoin': 'https://api.kucoin.com', 'binance': 'https://api.binance.com',
          'bitget': 'https://api.bitget.com'}
 MAX_RESPONSE_BYTES = 64 * 1024 * 1024
+
+
+def serialized(method):
+    @wraps(method)
+    def guarded(self,*args,**kwargs):
+        with self.lock:return method(self,*args,**kwargs)
+    return guarded
 
 
 def fetch_json(url):
@@ -30,6 +39,7 @@ class PublicFeed:
         if exchange not in HOSTS:
             raise ValueError('Unsupported exchange')
         self.exchange, self.fee, self.fetch = exchange, number(fee), fetch
+        self.lock=threading.RLock()
         if not 0 <= self.fee < 1:
             raise ValueError('Invalid fee')
         self.rules, self.rules_at = {}, 0
@@ -37,6 +47,7 @@ class PublicFeed:
         self.request_interval = 0.25
         self.quote_prices,self.quote_prices_at,self.bitget_minimums={},0,{}
 
+    @serialized
     def get(self, path, **query):
         if time.monotonic() < self.blocked_until:
             raise ValueError('Exchange cooling down after HTTP rejection')
@@ -92,6 +103,7 @@ class PublicFeed:
                 prices[asset] = Decimal('1') / inverse
         return prices
 
+    @serialized
     def refresh_rules(self):
         rules = {}
         if self.exchange == 'kucoin':
@@ -133,9 +145,10 @@ class PublicFeed:
                 rules[f"{item['baseAsset']}-{item['quoteAsset']}"] = (step, minimum, notional, maximum)
         else:
             instruments = self.get('/api/v2/spot/public/symbols')
+            requested=time.time()
             tickers = self.get('/api/v3/market/tickers', category='SPOT')
             quote_usdt = self._bitget_quote_usdt_prices(tickers)
-            self.quote_prices,self.quote_prices_at=quote_usdt,time.time()
+            self.quote_prices,self.quote_prices_at=quote_usdt,requested
             for item in instruments:
                 if item.get('status') != 'online':
                     continue
@@ -157,11 +170,13 @@ class PublicFeed:
                     step, minimum, min_notional_quote, maximum)
         self.rules, self.rules_at = rules, time.time()
 
+    @serialized
     def pairs(self):
         if time.time() - self.rules_at > 900:
             self.refresh_rules()
         return tuple(sorted(self.rules))
 
+    @serialized
     def book(self, pair):
         if time.time() - self.rules_at > 900:
             self.refresh_rules()

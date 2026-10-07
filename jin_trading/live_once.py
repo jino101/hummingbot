@@ -21,7 +21,7 @@ def run(clients,exchange,pairs,amount,path,activate=False):
     portfolio=Portfolio(path,'live');portfolio.register(clients)
     brokers={name:SpotBroker(client,PublicFeed(name,'.002'),armed=activate) for name,client in clients.items()}
     for name,broker in brokers.items():broker.sync(portfolio,name)
-    engine=ExecutionEngine(portfolio,brokers)
+    engine=ExecutionEngine(portfolio,brokers,min_profit=Decimal('.0035'))
     reconciliation=engine.reconcile()
     if portfolio.orders(True):
         return {'mode':'blocked','reason':'Unsettled executions require inventory review','reconciliation':reconciliation}

@@ -66,6 +66,14 @@ def test_kucoin_network_parser_supports_v3_currency_shape():
     assert statuses[0].deposit_enabled is True
 
 
+@pytest.mark.parametrize('fee', [None, '', 'NaN', '-1', 'bad'])
+def test_unknown_transfer_fee_is_never_reported_as_free(fee):
+    binance=[{'coin':'BTC','networkList':[{'network':'BTC','withdrawFee':fee}]}]
+    kucoin={'data':{'currency':'BTC','chains':[{'chainName':'BTC','withdrawalMinFee':fee}]}}
+    assert parse_binance_network_statuses(binance,'BTC',Decimal('100000'))[0].withdrawal_fee_quote is None
+    assert parse_kucoin_network_statuses(kucoin,'BTC',Decimal('100000'))[0].withdrawal_fee_quote is None
+
+
 def test_permission_parsers_require_trading_and_detect_withdrawal_rights():
     binance = parse_binance_permissions(
         {
