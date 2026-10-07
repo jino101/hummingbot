@@ -14,11 +14,11 @@ from jin_trading.arbitrage import Book, number
 
 HOSTS = {'kucoin': 'https://api.kucoin.com', 'binance': 'https://api.binance.com',
          'bitget': 'https://api.bitget.com'}
-MAX_RESPONSE_BYTES = 16 * 1024 * 1024
+MAX_RESPONSE_BYTES = 64 * 1024 * 1024
 
 
 def fetch_json(url):
-    with urlopen(Request(url, headers={'User-Agent': 'JIN-paper-scanner/1.0'}), timeout=8) as response:
+    with urlopen(Request(url, headers={'User-Agent': 'JIN-paper-scanner/1.0'}), timeout=15) as response:
         raw = response.read(MAX_RESPONSE_BYTES + 1)
     if len(raw) > MAX_RESPONSE_BYTES:
         raise ValueError('Response too large')
