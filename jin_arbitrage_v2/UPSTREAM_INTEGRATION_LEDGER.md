@@ -30,3 +30,12 @@ No third-party implementation file was pasted into the new modules.
 7. Mobile dashboard and persistence. Read-only hosting and monitoring.
 
 The 40 optional ideas are deferred.
+
+
+## Block 2 upstream verification (2026-10-08)
+- Jupiter: official `jup-ag/docs` confirms current Swap API paths and API-key requirement; Tokens API V2 is documented for token metadata/discovery. JIN has not copied Jupiter implementation source and has not enabled transaction signing.
+- Raydium: official `raydium-io/raydium-sdk-V2-demo` contains current swap/route examples. Used as architecture/API reference only; no source copied.
+- Orca: official `orca-so/whirlpools` exposes swap quote/instruction APIs. Used as architecture/API reference only; no source copied.
+- Meteora: official `MeteoraAg` docs/SDK document DLMM swap quotes and Data API. Used as architecture/API reference only; no source copied.
+- Added local network-free unit tests for `costs.py`, `market_status.py`, and `triangular_depth.py`. These tests are committed but are not claimed as executed until CI/runtime reports a result.
+- Provider-neutral meme-token discovery write was attempted but the connector safety gate rejected that write, so it is deliberately not marked implemented.
