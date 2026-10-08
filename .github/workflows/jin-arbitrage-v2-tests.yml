@@ -1,0 +1,19 @@
+name: JIN Arbitrage V2 Tests
+on:
+  push:
+    branches: [jin-arbitrage-v2]
+  pull_request:
+    paths:
+      - "jin_arbitrage_v2/**"
+      - ".github/workflows/jin-arbitrage-v2-tests.yml"
+jobs:
+  offline-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Run network-free unit tests
+        run: python -m unittest discover -s jin_arbitrage_v2 -p "test_*.py" -t . -v

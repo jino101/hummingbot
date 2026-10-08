@@ -1,0 +1,23 @@
+name: JIN V2 tests
+
+on:
+  push:
+    branches: [jin-arbitrage-v2]
+  pull_request:
+    branches: [master]
+  workflow_dispatch:
+
+jobs:
+  jin-v2-unit-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Compile JIN V2
+        run: python -m compileall -q jin_arbitrage_v2
+      - name: Run JIN V2 offline unit tests
+        run: |
+          python -m unittest             jin_arbitrage_v2.test_selftest             jin_arbitrage_v2.test_streams             jin_arbitrage_v2.test_ccxt_feed             jin_arbitrage_v2.test_depth_scanner             jin_arbitrage_v2.test_execution             jin_arbitrage_v2.test_feed_health             -v
