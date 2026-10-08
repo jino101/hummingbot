@@ -55,3 +55,20 @@ SQLite/PnL; Dashboard; Alerts; 24/7 Monitoring; Deployment; Integrationstests
 ## Sicherheits-Gates
 
 Kein Live-Trading vor unabhängigen Integrationstests, Ausfalltests, Risikofreigabe und ausdrücklicher Entscheidung des Nutzers. Geschätzter Paper-PnL ist kein realisierter Gewinn.
+
+
+## Implementation sweep 2026-10-08
+
+The eight roadmap phases now have code-level paper/research coverage, with these boundaries:
+
+- Phase 01: CEX REST depth, Binance/Bybit streams, reconnect/backoff, stale checks, feed health.
+- Phase 02: depth-aware cross-exchange scanner, cost model, market/network compatibility primitives, partial paper fills.
+- Phase 03: risk limits, kill switch, partial-fill paper execution, rebalance planning. Hedge remains simulation/research, never an automatic live order.
+- Phase 04: cross, triangular/depth triangular, generic multi-leg/quadrangular, DEX normalization, funding and cash-and-carry research scanners.
+- Phase 05: Solana token filtering/discovery primitives plus Jupiter/Raydium/Orca/Meteora adapter interfaces and Gateway quote client. Real provider quote responses still require live read-only integration tests.
+- Phase 06: stat-arb plus pairs z-score, mean reversion, momentum, breakout, market-making quotes and grid research helpers.
+- Phase 07: liquidation pressure, on-chain flow, yield ranking, portfolio metrics, anomaly scoring and deterministic backtest helper.
+- Phase 08: SQLite trade store, dashboard payload, alerts, runners and end-to-end offline acceptance test.
+
+### Definition of complete
+“Implemented” here means code exists and is covered by deterministic tests where feasible. It does **not** mean every external venue/API has been live-verified. Live trading remains disabled. Release still requires the test suite, read-only smoke tests, provider credentials/API access where required, and a sustained paper run.
