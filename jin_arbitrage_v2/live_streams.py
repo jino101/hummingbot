@@ -124,16 +124,32 @@ class BybitTickerStream(JsonTickerStream):
         )
 
 async def merge_streams(*streams):
-    queue = asyncio.Queue()
+    """Merge streams; surface failures instead of silently waiting forever."""
+    queue = asyncio.Queue(maxsize=1000)
 
     async def pump(stream):
-        async for quote in stream:
-            await queue.put(quote)
+        try:
+            async for quote in stream:
+                await queue.put(("quote", quote))
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            await queue.put(("error", exc))
+        else:
+            await queue.put(("done", None))
 
     tasks = [asyncio.create_task(pump(s)) for s in streams]
+    remaining = len(tasks)
     try:
-        while True:
-            yield await queue.get()
+        while remaining:
+            kind, payload = await queue.get()
+            if kind == "quote":
+                yield payload
+            elif kind == "error":
+                raise RuntimeError("Market-data stream failed") from payload
+            else:
+                remaining -= 1
     finally:
         for task in tasks:
             task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
