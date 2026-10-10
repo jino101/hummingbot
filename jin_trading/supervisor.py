@@ -13,6 +13,7 @@ from pathlib import Path
 from zoneinfo import ZoneInfo
 
 from jin_trading.arbitrage import number
+from jin_trading.database import connect
 
 TERMINAL = {'closed', 'canceled', 'rejected', 'expired'}
 
@@ -46,7 +47,7 @@ class Portfolio:
             if self.get(db, 'halt') is None:self.put(db, 'halt', '0')
 
     def db(self):
-        db = sqlite3.connect(self.path, timeout=15, isolation_level='IMMEDIATE')
+        db = connect(self.path, timeout=15, isolation_level='IMMEDIATE')
         db.row_factory = sqlite3.Row
         return db
 
@@ -290,3 +291,4 @@ class Portfolio:
             return {'mode':self.mode,'equity':str(equity),'baseline':self.get(db,'baseline'),
                     'ready':not reason,'halt':self.get(db,'halt')=='1','reason':reason,
                     'accounts':accounts,'runs':runs,'orders':self.orders()}
+

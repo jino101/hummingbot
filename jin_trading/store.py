@@ -7,6 +7,7 @@ from decimal import Decimal
 from zoneinfo import ZoneInfo
 
 from jin_trading.arbitrage import number
+from jin_trading.database import connect
 
 
 class Store:
@@ -26,7 +27,7 @@ class Store:
             db.execute("INSERT OR IGNORE INTO settings VALUES ('halt', '0')")
 
     def connect(self):
-        db = sqlite3.connect(self.path, timeout=15, isolation_level='IMMEDIATE')
+        db = connect(self.path, timeout=15, isolation_level='IMMEDIATE')
         db.row_factory = sqlite3.Row
         return db
 
@@ -243,3 +244,4 @@ class Store:
             return {'mode': 'paper', 'live_available': False, 'capital': str(self._total(db)), 'bots': bots,
                     'trades': trades, 'halt': self._get(db, 'halt') == '1',
                     'reason': self._get(db, 'reason', ''), 'baseline': self._get(db, 'baseline')}
+

@@ -1,4 +1,5 @@
 import tempfile
+import os
 import unittest
 from pathlib import Path
 
@@ -14,8 +15,10 @@ class OperationTests(unittest.TestCase):
             backup(source,copy);backup(copy,restored)
             self.assertTrue(Store(restored).snapshot()['halt'])
             self.assertFalse(health(restored)['healthy'])
-            self.assertEqual(copy.stat().st_mode&0o777,0o600)
+            if os.name != 'nt':
+                self.assertEqual(copy.stat().st_mode&0o777,0o600)
             with self.assertRaises(ValueError):backup(source,copy)
             with self.assertRaises(ValueError):backup(Path(directory)/'absent',Path(directory)/'new')
             store.reset();store.control('bot',True)
             self.assertIn('heartbeat',health(source)['errors'][0])
+
