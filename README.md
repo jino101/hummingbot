@@ -222,3 +222,11 @@ If you represent an exchange that wants an official Hummingbot connector, see [H
 
 * **License**: Hummingbot is open source and licensed under [Apache 2.0](./LICENSE).
 * **Data collection**: See [Reporting](https://hummingbot.org/reporting/) for information on anonymous data collection and reporting in Hummingbot.
+
+## JIN personal trading extension
+
+See [JIN implementation, audit and setup](docs/jin/README.md) for the new mobile
+paper dashboard, shared 5-USDT virtual budgets, triangular/cross-exchange monitor,
+Hummingbot WebSocket bridge, replay and tested executor fixes. Live trading,
+central control of arbitrary Hummingbot bots, equities and Forex remain incomplete;
+the audit lists the outstanding integration work explicitly.

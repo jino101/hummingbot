@@ -62,6 +62,8 @@ class ArbitrageExecutor(ExecutorBase):
                  config: ArbitrageExecutorConfig,
                  update_interval: float = 1.0,
                  max_retries: int = 3):
+        if not config.order_amount.is_finite() or config.order_amount <= 0:
+            raise ValueError("Order amount must be positive and finite")
         if not self.is_arbitrage_valid(pair1=config.buying_market.trading_pair,
                                        pair2=config.selling_market.trading_pair):
             raise Exception("Arbitrage is not valid since the trading pairs are not interchangeable.")
@@ -97,6 +99,7 @@ class ArbitrageExecutor(ExecutorBase):
         self.quote_conversion_pair = f"{sell_quote_asset}-{buy_quote_asset}"
         self.rate_oracle = RateOracle.get_instance()
         self._cumulative_failures = 0
+        self._quote_conversion_rate = Decimal("1")
 
     async def validate_sufficient_balance(self):
         base_asset_for_selling_exchange = self.connectors[self.selling_market.connector_name].get_available_balance(
@@ -135,21 +138,22 @@ class ArbitrageExecutor(ExecutorBase):
         if self.close_type == CloseType.COMPLETED:
             sell_quote_amount = self.sell_order.order.executed_amount_base * self.sell_order.average_executed_price
             buy_quote_amount = self.buy_order.order.executed_amount_base * self.buy_order.average_executed_price
-            return sell_quote_amount - buy_quote_amount - self.cum_fees_quote
+            return sell_quote_amount * self._quote_conversion_rate - buy_quote_amount - self.cum_fees_quote
         else:
             return Decimal("0")
 
     def get_net_pnl_pct(self) -> Decimal:
         if self.is_closed:
             if self.buy_order.order and self.buy_order.order.executed_amount_base > 0:
-                return self.net_pnl_quote / self.buy_order.order.executed_amount_base
+                cost = self.buy_order.order.executed_amount_base * self.buy_order.average_executed_price
+                return self.net_pnl_quote / cost if cost > 0 else Decimal("0")
             else:
                 return Decimal("0")
         else:
             return Decimal("0")
 
     def get_cum_fees_quote(self) -> Decimal:
-        return self.buy_order.cum_fees_quote + self.sell_order.cum_fees_quote
+        return self.buy_order.cum_fees_quote + self.sell_order.cum_fees_quote * self._quote_conversion_rate
 
     @property
     def buy_order(self) -> TrackedOrder:
@@ -189,7 +193,14 @@ class ArbitrageExecutor(ExecutorBase):
                 self.check_order_status()
 
     def early_stop(self, keep_position: bool = False):
-        self.close_type = CloseType.POSITION_HOLD if keep_position else CloseType.EARLY_STOP
+        # A stop must retain known exposure even when the caller did not request
+        # position holding. Cancellation requests do not confirm exchange state;
+        # late fills still require external reconciliation.
+        self._cancel_outstanding_orders()
+        self._held_position_orders = self._collect_held_position_orders()
+        self.close_type = (
+            CloseType.POSITION_HOLD if keep_position or self._held_position_orders else CloseType.EARLY_STOP
+        )
         self.stop()
 
     def check_order_status(self):
@@ -200,8 +211,12 @@ class ArbitrageExecutor(ExecutorBase):
 
     async def execute_arbitrage(self):
         self._status = RunnableStatus.SHUTTING_DOWN
-        self.place_buy_arbitrage_order()
-        self.place_sell_arbitrage_order()
+        try:
+            self.place_buy_arbitrage_order()
+            self.place_sell_arbitrage_order()
+        except Exception:
+            self.logger().exception("Order submission failed; stopping arbitrage without retrying unknown exposure")
+            self.force_stop_with_position_hold()
 
     def place_buy_arbitrage_order(self):
         self.buy_order.order_id = self.place_order(
@@ -262,13 +277,15 @@ class ArbitrageExecutor(ExecutorBase):
     async def update_trade_pnl_pct(self):
         self._last_buy_price, self._last_sell_price = await self.get_buy_and_sell_prices()
 
-        if not self._last_buy_price or not self._last_sell_price:
+        if any(price is None or not price.is_finite() or price <= 0
+               for price in (self._last_buy_price, self._last_sell_price)):
             raise Exception("Could not get buy and sell prices")
 
         # Fetch the conversion rate between quote assets
         conversion_rate = await self.get_quote_asset_conversion_rate()
 
         # Normalize the sell price to the same quote asset as the buy price
+        self._quote_conversion_rate = conversion_rate
         normalized_sell_price = self._last_sell_price * conversion_rate
 
         # Calculate the profitability (PnL percentage)
@@ -279,9 +296,13 @@ class ArbitrageExecutor(ExecutorBase):
         Fetch the conversion rate between the quote assets of the buying and selling markets.
         Example: For M3M3/USDT and M3M3/SOL, fetch the SOL/USDT rate.
         """
+        if self.quote_conversion_pair.split("-")[0] == self.quote_conversion_pair.split("-")[1]:
+            return Decimal("1")
         # Fetch the conversion rate from the connector
         try:
             conversion_rate = self.rate_oracle.get_pair_rate(self.quote_conversion_pair)
+            if conversion_rate is None or not conversion_rate.is_finite() or conversion_rate <= 0:
+                raise ValueError(f"Invalid conversion rate for {self.quote_conversion_pair}")
             return conversion_rate
         except Exception as e:
             self.logger().error(f"Error fetching conversion rate for {self.quote_conversion_pair}: {e}")
@@ -292,12 +313,14 @@ class ArbitrageExecutor(ExecutorBase):
         connector = self.connectors[exchange]
         price = await self.get_resulting_price_for_amount(exchange, trading_pair, is_buy, order_amount)
         if self.is_amm_connector(exchange=exchange):
+            if not self.config.gas_conversion_price or self.config.gas_conversion_price <= 0:
+                raise ValueError("A positive gas conversion price is required")
             gas_cost = connector.network_transaction_fee
             return gas_cost.amount / self.config.gas_conversion_price
         else:
             fee = connector.get_fee(
-                base_currency=asset,
-                quote_currency=asset,
+                base_currency=split_hb_trading_pair(trading_pair)[0],
+                quote_currency=split_hb_trading_pair(trading_pair)[1],
                 order_type=OrderType.MARKET,
                 order_side=TradeType.BUY if is_buy else TradeType.SELL,
                 amount=order_amount,
@@ -446,8 +469,7 @@ class ArbitrageExecutor(ExecutorBase):
             # Jino live mode keeps auto_hedge_enabled=False and preserves the
             # exposed position for explicit operator recovery instead of placing
             # an unreviewed third order.
-            self.close_type = CloseType.POSITION_HOLD
-            self.stop()
+            self.force_stop_with_position_hold()
             return
 
     def process_order_canceled_event(self, _, market, event: OrderCancelledEvent):
@@ -465,6 +487,7 @@ class ArbitrageExecutor(ExecutorBase):
             )
 
     def process_order_failed_event(self, _, market, event: MarketOrderFailureEvent):
+
         if getattr(self.config, "one_leg_recovery_enabled", False) is True:
             if self.buy_order.order_id == event.order_id:
                 self._apply_one_leg_recovery(
@@ -478,12 +501,25 @@ class ArbitrageExecutor(ExecutorBase):
                 )
             return
 
-        if self.buy_order.order_id == event.order_id:
-            self.place_buy_arbitrage_order()
+        if event.order_id in (self.buy_order.order_id, self.sell_order.order_id):
             self._cumulative_failures += 1
-        elif self.sell_order.order_id == event.order_id:
-            self.place_sell_arbitrage_order()
-            self._cumulative_failures += 1
+            self.logger().error("Arbitrage leg failed; manual reconciliation required before further trading")
+            self.force_stop_with_position_hold()
+
+    def _cancel_outstanding_orders(self):
+        for tracked, market in ((self.buy_order, self.buying_market), (self.sell_order, self.selling_market)):
+            if tracked.order_id and (not tracked.order or not tracked.order.is_done):
+                try:
+                    self._strategy.cancel(market.connector_name, market.trading_pair, tracked.order_id)
+                except Exception:
+                    self.logger().exception("Order cancellation failed; manual reconciliation required")
+
+    def _collect_held_position_orders(self):
+        held = []
+        for tracked in (self.buy_order, self.sell_order):
+            if tracked.order and tracked.order.executed_amount_base > 0:
+                held.append(tracked.order.to_json())
+        return held
 
     def get_custom_info(self) -> Dict:
         return {
@@ -503,12 +539,15 @@ class ArbitrageExecutor(ExecutorBase):
             "tx_cost_pct": self._last_tx_cost / self.order_amount,
             "profit_pct": self._current_profitability,
             "failures": self._cumulative_failures,
+            "held_position_orders": self._held_position_orders,
+            "buy_order_id": self.buy_order.order_id,
+            "sell_order_id": self.sell_order.order_id,
         }
 
     def to_format_status(self):
         lines = []
         if self._last_buy_price and self._last_sell_price:
-            trade_pnl_pct = (self._last_sell_price - self._last_buy_price) / self._last_buy_price
+            trade_pnl_pct = (self._last_sell_price * self._quote_conversion_rate - self._last_buy_price) / self._last_buy_price
             tx_cost_pct = self._last_tx_cost / self.order_amount
             base, quote = split_hb_trading_pair(trading_pair=self.buying_market.trading_pair)
             lines.extend([f"""
@@ -523,4 +562,5 @@ class ArbitrageExecutor(ExecutorBase):
         else:
             msg = ["There was an error while formatting the status for the executor."]
             self.logger().warning(msg)
-            return lines.extend(msg)
+            lines.extend(msg)
+            return lines

@@ -8,7 +8,7 @@ class NetworkStatus:
     network: str
     deposit_enabled: Optional[bool]
     withdrawal_enabled: Optional[bool]
-    withdrawal_fee_quote: Decimal = Decimal("0")
+    withdrawal_fee_quote: Optional[Decimal] = None
     min_confirmations: Optional[int] = None
     estimated_arrival_minutes: Optional[Decimal] = None
 
@@ -24,6 +24,10 @@ class VenueQuote:
     max_sell_base: Decimal
     networks: Sequence[NetworkStatus] = ()
     observed_at: Optional[float] = None
+    buy_fee_pct: Optional[Decimal] = None
+    sell_fee_pct: Optional[Decimal] = None
+    buy_flat_fee_quote: Decimal = Decimal('0')
+    sell_flat_fee_quote: Decimal = Decimal('0')
 
 
 @dataclass(frozen=True)
@@ -85,13 +89,13 @@ def _depositable_networks(networks: Sequence[NetworkStatus]) -> Set[str]:
 
 
 def common_transfer_networks(buy_venue: VenueQuote, sell_venue: VenueQuote) -> List[str]:
-    """Networks that can move the asset from the sell venue back to the buy venue.
+    """Networks that move the purchased base asset from the buy venue to the sell venue.
 
-    This models the common rebalance direction after buying base on the buy venue and
-    selling base on the sell venue. Unknown status fails closed because only explicit
+    Buying increases base inventory on the buy venue; selling depletes it on the
+    sell venue. Unknown status fails closed because only explicit
     True values are considered usable.
     """
-    usable = _withdrawable_networks(sell_venue.networks) & _depositable_networks(buy_venue.networks)
+    usable = _withdrawable_networks(buy_venue.networks) & _depositable_networks(sell_venue.networks)
     return sorted(usable)
 
 
@@ -100,12 +104,14 @@ def estimated_rebalance_fee_quote(buy_venue: VenueQuote, sell_venue: VenueQuote)
     common = set(common_transfer_networks(buy_venue, sell_venue))
     fees = [
         network.withdrawal_fee_quote
-        for network in sell_venue.networks
+        for network in buy_venue.networks
         if _canonical_network(network.network) in common
         and network.withdrawal_enabled is True
+        and network.withdrawal_fee_quote is not None
+        and network.withdrawal_fee_quote.is_finite()
         and network.withdrawal_fee_quote >= 0
     ]
-    return min(fees) if fees else Decimal("0")
+    return min(fees) if fees else Decimal("Infinity")
 
 
 def calculate_opportunity(
@@ -126,9 +132,13 @@ def calculate_opportunity(
         return None
 
     gross_spread_pct = (sell_venue.sell_price - buy_venue.buy_price) / buy_venue.buy_price
-    estimated_fee_pct = buy_venue.taker_fee_pct + sell_venue.taker_fee_pct
-    net_spread_pct = gross_spread_pct - estimated_fee_pct - estimated_slippage_pct
     buy_notional = amount_base * buy_venue.buy_price
+    sell_notional = amount_base * sell_venue.sell_price
+    buy_fee=buy_venue.taker_fee_pct if buy_venue.buy_fee_pct is None else buy_venue.buy_fee_pct
+    sell_fee=sell_venue.taker_fee_pct if sell_venue.sell_fee_pct is None else sell_venue.sell_fee_pct
+    estimated_fee_pct=(buy_notional*buy_fee+sell_notional*sell_fee+
+                       buy_venue.buy_flat_fee_quote+sell_venue.sell_flat_fee_quote)/buy_notional
+    net_spread_pct = gross_spread_pct - estimated_fee_pct - estimated_slippage_pct
     expected_profit_quote = buy_notional * net_spread_pct
     networks = common_transfer_networks(buy_venue, sell_venue)
     rebalance_fee_quote = estimated_rebalance_fee_quote(buy_venue, sell_venue)

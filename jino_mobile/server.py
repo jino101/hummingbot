@@ -6,6 +6,7 @@ engage the runtime kill switch. It cannot disable the kill switch, enable live m
 or submit an exchange order.
 """
 import argparse
+import hmac
 import json
 import mimetypes
 import os
@@ -34,7 +35,7 @@ class JinoDashboardHandler(BaseHTTPRequestHandler):
         if not expected:
             return False
         supplied = self.headers.get("Authorization", "")
-        return supplied == f"Bearer {expected}"
+        return hmac.compare_digest(supplied, f"Bearer {expected}")
 
     def _require_auth(self) -> bool:
         if self._authorized():

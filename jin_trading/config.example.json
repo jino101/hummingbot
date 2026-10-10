@@ -1,0 +1,21 @@
+{
+  "mode": "paper",
+  "allowed_origins": ["https://jin-arbitrage-bot.jinoandjelkovic.chatgpt.site"],
+  "poll_seconds": 5,
+  "existing_observation_path": "data/jino_observe_latest.json",
+  "existing_kill_switch_path": "data/jino_kill_switch",
+  "max_age": 3,
+  "min_profit": "0.0035",
+  "slippage": "0.001",
+  "max_deploy_fraction": "0.5",
+  "stress_fraction": "0.01",
+  "pair_mode": "auto",
+  "batch_size": 12,
+  "deny_pairs": [],
+  "pairs": ["BTC-USDT", "ETH-USDT", "ETH-BTC"],
+  "fees": {"kucoin": "0.002", "binance": "0.002", "bitget": "0.002"},
+  "bots": {
+    "kucoin-triangle": {"exchange": "kucoin", "budget": "50"},
+    "binance-triangle": {"exchange": "binance", "budget": "50"}
+  }
+}

@@ -1,0 +1,20 @@
+name: JIN Windows checks
+on:
+  push:
+    paths: ['jin_trading/**', 'tests_jin/**', 'hummingbot/jino_arbitrage/**', 'hummingbot/strategy_v2/executors/arbitrage_executor/**', 'controllers/generic/jino_cross_exchange_arbitrage.py', '.github/workflows/jin-windows.yml']
+  pull_request:
+    paths: ['jin_trading/**', 'tests_jin/**', 'hummingbot/jino_arbitrage/**', 'hummingbot/strategy_v2/executors/arbitrage_executor/**', 'controllers/generic/jino_cross_exchange_arbitrage.py', '.github/workflows/jin-windows.yml']
+permissions:
+  contents: read
+jobs:
+  windows-tests:
+    runs-on: windows-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python -m pip install tzdata pandas==2.2.3
+      - run: python -m unittest discover -s tests_jin
+      - run: python -m compileall -q jin_trading

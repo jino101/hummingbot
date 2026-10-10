@@ -220,20 +220,19 @@ def test_live_mode_blocks_until_readiness_is_verified():
     assert controller.determine_executor_actions() == []
 
 
-def test_live_mode_allows_executor_only_after_readiness_passes():
+def test_legacy_live_mode_remains_blocked_without_durable_execution():
     controller = make_controller(live_config())
     controller.market_data_provider.quantize_order_amount.return_value = Decimal("0.0001")
     controller.processed_data["live_readiness"] = {
         "ready": True,
+        "checked_at": controller.market_data_provider.time(),
         "reasons": (),
         "common_rebalance_networks": ("BITCOIN",),
     }
 
     actions = controller.determine_executor_actions()
 
-    assert len(actions) == 2
-    assert all(action.executor_config.one_leg_recovery_enabled for action in actions)
-    assert all(not action.executor_config.auto_hedge_enabled for action in actions)
+    assert actions == []
 
 
 def test_live_mode_blocks_on_failed_readiness_reason():
@@ -328,3 +327,12 @@ def test_readonly_mode_rejects_paper_connectors():
             exchange_pair_2=ConnectorPair(connector_name="kucoin_paper_trade", trading_pair="BTC-USDT"),
             rate_connector="binance_paper_trade",
         )
+
+
+def test_live_mode_blocks_stale_or_future_readiness():
+    controller = make_controller(live_config())
+    now = controller.market_data_provider.time()
+    for checked_at in (None, now - 121, now + 1):
+        controller.processed_data["live_readiness"] = {"ready": True, "checked_at": checked_at}
+        assert controller.determine_executor_actions() == []
+        assert "timestamp" in controller._live_readiness_gate_reason()

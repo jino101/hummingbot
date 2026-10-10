@@ -2,9 +2,9 @@ name: Jino Arbitrage CI
 
 on:
   push:
-    branches: [chatgpt/arbitrage-bot]
+    branches: [chatgpt/arbitrage-bot, feat/jin-trading-control]
   pull_request:
-    branches: [master]
+    branches: [master, chatgpt/arbitrage-bot]
     paths:
       - 'controllers/generic/jino_cross_exchange_arbitrage.py'
       - 'hummingbot/jino_arbitrage/**'

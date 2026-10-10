@@ -58,6 +58,41 @@ class TestArbitrageExecutor(IsolatedAsyncioWrapperTestCase, LoggerMixinForTest):
         self.assertTrue(self.executor.is_arbitrage_valid('ETH-USDT', 'WETH-USDT'))
         self.assertFalse(self.executor.is_arbitrage_valid('ETH-USDT', 'BTC-USDT'))
 
+    def test_early_stop_cancels_orders_and_retains_partial_fill(self):
+        buy_order = Mock()
+        buy_order.executed_amount_base = Decimal('0.4')
+        buy_order.is_done = False
+        buy_order.to_json.return_value = {'id': 'buy', 'filled': '0.4'}
+        self.executor.buy_order.order_id = 'buy'
+        self.executor.buy_order.order = buy_order
+        self.executor.sell_order.order_id = 'sell'
+
+        self.executor.early_stop()
+
+        self.strategy.cancel.assert_any_call('binance', 'POL-USDT', 'buy')
+        self.strategy.cancel.assert_any_call('uniswap_polygon_mainnet', 'WPOL-USDT', 'sell')
+        self.assertEqual(self.strategy.cancel.call_count, 2)
+        self.assertEqual(self.executor.close_type, CloseType.POSITION_HOLD)
+        self.assertEqual(self.executor.get_custom_info()['held_position_orders'], [{'id': 'buy', 'filled': '0.4'}])
+        self.assertEqual(self.executor.status, RunnableStatus.TERMINATED)
+
+    def test_early_stop_retains_fills_when_one_cancellation_raises(self):
+        buy_order = Mock()
+        buy_order.executed_amount_base = Decimal('0.4')
+        buy_order.is_done = False
+        buy_order.to_json.return_value = {'id': 'buy', 'filled': '0.4'}
+        self.executor.buy_order.order_id = 'buy'
+        self.executor.buy_order.order = buy_order
+        self.executor.sell_order.order_id = 'sell'
+        self.strategy.cancel.side_effect = [RuntimeError('offline'), None]
+
+        self.executor.early_stop()
+
+        self.assertEqual(self.strategy.cancel.call_count, 2)
+        self.assertEqual(self.executor.close_type, CloseType.POSITION_HOLD)
+        self.assertEqual(self.executor.get_custom_info()['held_position_orders'], [{'id': 'buy', 'filled': '0.4'}])
+        self.assertEqual(self.executor.status, RunnableStatus.TERMINATED)
+
     def test_net_pnl_quote(self):
         self.executor.close_type = CloseType.COMPLETED
         self.executor._buy_order = Mock(spec=TrackedOrder)
@@ -70,7 +105,7 @@ class TestArbitrageExecutor(IsolatedAsyncioWrapperTestCase, LoggerMixinForTest):
         self.executor._sell_order.cum_fees_quote = Decimal('1')
         self.executor._status = RunnableStatus.TERMINATED
         self.assertEqual(self.executor.get_net_pnl_quote(), Decimal('98'))
-        self.assertEqual(self.executor.get_net_pnl_pct(), Decimal('98'))
+        self.assertEqual(self.executor.get_net_pnl_pct(), Decimal('0.98'))
 
     @patch.object(ArbitrageExecutor, "get_resulting_price_for_amount")
     @patch.object(ArbitrageExecutor, "get_tx_cost_in_asset")
@@ -142,6 +177,7 @@ class TestArbitrageExecutor(IsolatedAsyncioWrapperTestCase, LoggerMixinForTest):
         )
         self.executor.process_order_failed_event("102", market, sell_order_failed_event)
         self.assertEqual(self.executor._cumulative_failures, 2)
+
 
 
     def test_paper_sell_order_created_uses_synthetic_tracker(self):
@@ -265,3 +301,21 @@ class TestArbitrageExecutor(IsolatedAsyncioWrapperTestCase, LoggerMixinForTest):
 
         self.assertEqual(self.executor.close_type, CloseType.POSITION_HOLD)
         self.assertEqual(self.executor.status, RunnableStatus.TERMINATED)
+
+    def test_net_pnl_converts_sell_quote_and_fees(self):
+        self.test_net_pnl_quote()
+        self.executor._quote_conversion_rate = Decimal("0.5")
+        self.assertEqual(self.executor.get_net_pnl_quote(), Decimal("-1.5"))
+        self.assertEqual(self.executor.get_net_pnl_pct(), Decimal("-0.015"))
+
+    @patch.object(ArbitrageExecutor, "place_order")
+    def test_failure_does_not_resubmit_partial_leg(self, place_order):
+        self.executor.buy_order.order_id = "partial-buy"
+        self.executor.process_order_failed_event(None, None, MarketOrderFailureEvent(
+            timestamp=1, order_id="partial-buy", order_type=OrderType.MARKET))
+        place_order.assert_not_called()
+        self.assertEqual(self.executor.close_type, CloseType.FAILED)
+
+    def test_status_without_price_returns_list(self):
+        self.executor._last_buy_price = Decimal("0")
+        self.assertIsInstance(self.executor.to_format_status(), list)

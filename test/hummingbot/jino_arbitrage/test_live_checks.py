@@ -66,6 +66,14 @@ def test_kucoin_network_parser_supports_v3_currency_shape():
     assert statuses[0].deposit_enabled is True
 
 
+@pytest.mark.parametrize('fee', [None, '', 'NaN', '-1', 'bad'])
+def test_unknown_transfer_fee_is_never_reported_as_free(fee):
+    binance=[{'coin':'BTC','networkList':[{'network':'BTC','withdrawFee':fee}]}]
+    kucoin={'data':{'currency':'BTC','chains':[{'chainName':'BTC','withdrawalMinFee':fee}]}}
+    assert parse_binance_network_statuses(binance,'BTC',Decimal('100000'))[0].withdrawal_fee_quote is None
+    assert parse_kucoin_network_statuses(kucoin,'BTC',Decimal('100000'))[0].withdrawal_fee_quote is None
+
+
 def test_permission_parsers_require_trading_and_detect_withdrawal_rights():
     binance = parse_binance_permissions(
         {
@@ -143,6 +151,29 @@ def test_live_readiness_fails_closed_on_withdrawal_permission_and_stale_networks
     assert report.ready is False
     assert any("withdrawal permission" in reason for reason in report.reasons)
     assert any("stale" in reason for reason in report.reasons)
+
+
+@pytest.mark.parametrize('field', ['price', 'cap', 'base_balance', 'quote_balance'])
+@pytest.mark.parametrize('invalid', ['NaN', 'Infinity', '-Infinity'])
+def test_live_readiness_rejects_nonfinite_market_and_account_values(field, invalid):
+    now, permissions, networks, balances = _healthy_report_inputs()
+    price, cap = Decimal('100000'), Decimal('25')
+    if field == 'price':
+        price = Decimal(invalid)
+    elif field == 'cap':
+        cap = Decimal(invalid)
+    else:
+        balance = balances['binance']
+        balances['binance'] = BalanceSnapshot(
+            'binance', Decimal(invalid) if field == 'base_balance' else balance.base_available,
+            Decimal(invalid) if field == 'quote_balance' else balance.quote_available,
+        )
+    report = assess_live_readiness(
+        ['binance', 'kucoin'], 'BTC-USDT', cap, price,
+        {'binance': True, 'kucoin': True}, permissions, networks, balances, now,
+    )
+    assert report.ready is False
+    assert any('finite' in reason for reason in report.reasons)
 
 
 @pytest.mark.asyncio

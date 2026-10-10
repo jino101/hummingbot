@@ -32,9 +32,9 @@ def test_calculates_net_spread_after_fees_and_slippage():
     )
     assert opportunity is not None
     assert opportunity.gross_spread_pct == Decimal("0.03")
-    assert opportunity.estimated_fee_pct == Decimal("0.003")
-    assert opportunity.net_spread_pct == Decimal("0.026")
-    assert opportunity.expected_profit_quote == Decimal("1.3000")
+    assert opportunity.estimated_fee_pct == Decimal("0.00306")
+    assert opportunity.net_spread_pct == Decimal("0.02594")
+    assert opportunity.expected_profit_quote == Decimal("1.29700")
 
 
 def test_caps_amount_by_available_depth():
@@ -67,14 +67,14 @@ def test_network_aliases_match_and_unknown_fails_closed():
         "100",
         "99",
         "0",
-        networks=[NetworkStatus("ERC20", deposit_enabled=True, withdrawal_enabled=None)],
+        networks=[NetworkStatus("ERC20", deposit_enabled=None, withdrawal_enabled=True)],
     )
     sell_venue = quote(
         "b",
         "102",
         "103",
         "0",
-        networks=[NetworkStatus("Ethereum", deposit_enabled=None, withdrawal_enabled=True)],
+        networks=[NetworkStatus("Ethereum", deposit_enabled=True, withdrawal_enabled=None)],
     )
     opportunity = calculate_opportunity(buy_venue, sell_venue, Decimal("0.1"))
     assert opportunity is not None
@@ -118,8 +118,8 @@ def test_rebalance_fee_uses_cheapest_common_enabled_network():
         "99",
         "0",
         networks=[
-            NetworkStatus("ERC20", deposit_enabled=True, withdrawal_enabled=False),
-            NetworkStatus("TRC20", deposit_enabled=True, withdrawal_enabled=False),
+            NetworkStatus("ERC20", deposit_enabled=False, withdrawal_enabled=True, withdrawal_fee_quote=Decimal("3")),
+            NetworkStatus("TRC20", deposit_enabled=False, withdrawal_enabled=True, withdrawal_fee_quote=Decimal("1")),
         ],
     )
     sell_venue = quote(
@@ -128,8 +128,8 @@ def test_rebalance_fee_uses_cheapest_common_enabled_network():
         "103",
         "0",
         networks=[
-            NetworkStatus("Ethereum", deposit_enabled=False, withdrawal_enabled=True, withdrawal_fee_quote=Decimal("3")),
-            NetworkStatus("Tron", deposit_enabled=False, withdrawal_enabled=True, withdrawal_fee_quote=Decimal("1")),
+            NetworkStatus("Ethereum", deposit_enabled=True, withdrawal_enabled=False, withdrawal_fee_quote=Decimal("99")),
+            NetworkStatus("Tron", deposit_enabled=True, withdrawal_enabled=False, withdrawal_fee_quote=Decimal("99")),
         ],
     )
     opportunity = calculate_opportunity(buy_venue, sell_venue, Decimal("0.5"))
@@ -137,3 +137,11 @@ def test_rebalance_fee_uses_cheapest_common_enabled_network():
     assert opportunity.common_transfer_networks == ["ETHEREUM", "TRON"]
     assert opportunity.estimated_rebalance_fee_quote == Decimal("1")
     assert opportunity.expected_profit_after_rebalance_quote == opportunity.expected_profit_quote - Decimal("1")
+
+
+def test_rebalance_rejects_only_the_reverse_direction():
+    buy = quote("buy", "100", "99", "0", networks=[NetworkStatus("ERC20", True, False)])
+    sell = quote("sell", "102", "103", "0", networks=[NetworkStatus("Ethereum", False, True)])
+    opportunity = calculate_opportunity(buy, sell, Decimal("0.1"))
+    assert opportunity is not None
+    assert opportunity.rebalance_transferable is False
