@@ -2,12 +2,14 @@ name: JIN paper trading checks
 on:
   workflow_dispatch:
   push:
-    paths: ['jin_trading/**', 'tests_jin/**', 'scripts/jin_arbitrage_monitor.py', 'hummingbot/strategy_v2/executors/arbitrage_executor/**', 'controllers/generic/arbitrage_controller.py', 'controllers/generic/jino_cross_exchange_arbitrage.py', 'hummingbot/jino_arbitrage/**', 'jino_mobile/**', 'Dockerfile.jin', 'docker-compose.jin.yml', '.github/workflows/jin-checks.yml']
+    paths: ['jin_trading/**', 'tests_jin/**', 'scripts/jin_arbitrage_monitor.py', 'scripts/jin_public_probe.py', 'scripts/jin_paper_soak.py', 'hummingbot/strategy_v2/executors/arbitrage_executor/**', 'controllers/generic/arbitrage_controller.py', 'controllers/generic/jino_cross_exchange_arbitrage.py', 'hummingbot/jino_arbitrage/**', 'jino_mobile/**', 'Dockerfile.jin', 'docker-compose.jin.yml', '.github/workflows/jin-checks.yml', '.github/workflows/jin-kucoin.yml']
   pull_request:
-    paths: ['jin_trading/**', 'tests_jin/**', 'scripts/jin_arbitrage_monitor.py', 'hummingbot/strategy_v2/executors/arbitrage_executor/**', 'controllers/generic/arbitrage_controller.py', 'controllers/generic/jino_cross_exchange_arbitrage.py', 'hummingbot/jino_arbitrage/**', 'jino_mobile/**', 'Dockerfile.jin', 'docker-compose.jin.yml', '.github/workflows/jin-checks.yml']
+    paths: ['jin_trading/**', 'tests_jin/**', 'scripts/jin_arbitrage_monitor.py', 'scripts/jin_public_probe.py', 'scripts/jin_paper_soak.py', 'hummingbot/strategy_v2/executors/arbitrage_executor/**', 'controllers/generic/arbitrage_controller.py', 'controllers/generic/jino_cross_exchange_arbitrage.py', 'hummingbot/jino_arbitrage/**', 'jino_mobile/**', 'Dockerfile.jin', 'docker-compose.jin.yml', '.github/workflows/jin-checks.yml', '.github/workflows/jin-kucoin.yml']
 permissions:
   contents: read
 jobs:
+  kucoin-integration:
+    uses: ./.github/workflows/jin-kucoin.yml
   paper-tests:
     runs-on: ubuntu-latest
     timeout-minutes: 8
@@ -27,3 +29,4 @@ jobs:
         run: |
           docker build -f Dockerfile.jin -t jin-paper-ci .
           docker compose -f docker-compose.jin.yml config >/dev/null
+

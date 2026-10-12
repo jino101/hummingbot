@@ -1,9 +1,6 @@
 name: JIN KuCoin integration
 on:
-  push:
-    paths: ['jin_trading/**', 'tests_jin/**', 'scripts/jin_public_probe.py', 'scripts/jin_paper_soak.py', '.github/workflows/jin-kucoin.yml']
-  pull_request:
-    paths: ['jin_trading/**', 'tests_jin/**', 'scripts/jin_public_probe.py', 'scripts/jin_paper_soak.py', '.github/workflows/jin-kucoin.yml']
+  workflow_call:
   workflow_dispatch:
 permissions:
   contents: read
