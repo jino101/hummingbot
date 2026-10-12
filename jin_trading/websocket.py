@@ -29,7 +29,16 @@ class WebSocketRunner:
         if set(clients)!=set(worker.feeds):raise ValueError('WebSocket clients must match configured exchanges')
         self.worker,self.clients,self.rotation=worker,clients,rotation_seconds
         self.queue=asyncio.Queue(maxsize=200);self.books={};self.errors={};self.latencies=[];self.sequences={}
+        self.pending_books={}
         self.clock=time.monotonic
+
+    async def publish_book(self, quote):
+        """Keep the latest update per market; a busy market cannot evict another leg."""
+        key=(quote.exchange,quote.pair)
+        queued=key in self.pending_books
+        self.pending_books[key]=quote
+        if not queued:
+            await self.queue.put(('book',key))
 
     async def watch(self,exchange,pair):
         client=self.clients[exchange];key=(exchange,pair);previous=self.sequences.get(key);delay=1
@@ -48,8 +57,7 @@ class WebSocketRunner:
                         checked=await asyncio.to_thread(feed.book,pair)
                         quote=Book(exchange,pair,quote.bids,quote.asks,min(quote.timestamp,checked.timestamp),quote.sequence,
                                    quote.fee,quote.step,quote.min_size,checked.min_notional,quote.max_size)
-                    if self.queue.full():self.queue.get_nowait()
-                    self.queue.put_nowait(quote)
+                    await self.publish_book(quote)
                     self.errors.pop(exchange+':'+pair,None)
                     if raw.get('timestamp') is not None:
                         self.latencies.append((received-quote.timestamp)*1000);self.latencies=self.latencies[-500:]
@@ -58,17 +66,26 @@ class WebSocketRunner:
                     self.errors[exchange+':'+pair]=type(exc).__name__
                     await asyncio.sleep(delay);delay=min(delay*2,30)
         finally:
+            self.errors.pop(exchange+':'+pair,None)
             if getattr(client,'has',{}).get('unWatchOrderBook'):
                 try:await asyncio.wait_for(client.un_watch_order_book(pair.replace('-','/')),timeout=3)
                 except Exception:pass
 
     async def consume(self):
         while not self.worker.stop.is_set():
-            try:quote=await asyncio.wait_for(self.queue.get(),timeout=1)
+            try:item=await asyncio.wait_for(self.queue.get(),timeout=1)
             except asyncio.TimeoutError:continue
-            notice = quote[1] if isinstance(quote, tuple) and quote[0] == 'status' else None
-            if notice is None:
-                self.books[quote.exchange,quote.pair]=quote
+            pending=[item]
+            while not self.queue.empty():pending.append(self.queue.get_nowait())
+            notices=[];received={}
+            for kind,value in pending:
+                if kind=='status':
+                    notices.append(value)
+                else:
+                    quote=self.pending_books.pop(value,None)
+                    if quote is not None:
+                        self.books[value]=quote
+                        received[quote.exchange]=received.get(quote.exchange,0)+1
             now=time.time();future=[b for b in self.books.values() if b.timestamp>now]
             fresh=[b for b in self.books.values() if 0<=now-b.timestamp<=self.worker.config['max_age']]
             self.books={(b.exchange,b.pair):b for b in fresh}
@@ -78,10 +95,9 @@ class WebSocketRunner:
                 status = dict(row, fresh_books=sum(b.exchange == name for b in fresh),
                               future_books=sum(b.exchange == name for b in future),
                               max_future_seconds=max((b.timestamp-now for b in future if b.exchange==name),default=0))
-                if notice is None and quote.exchange == name:
-                    status['books_received'] = status.get('books_received', 0) + 1
+                status['books_received'] = status.get('books_received', 0) + received.get(name,0)
                 self.publish_venue(name, status)
-            errors=([notice] if notice else [])+[a+': '+e for a,e in self.errors.items()]
+            errors=notices+[a+': '+e for a,e in self.errors.items()]
             await asyncio.to_thread(self.worker.process_books,fresh,errors)
 
     async def discover(self, names=None):
@@ -120,7 +136,7 @@ class WebSocketRunner:
             self.worker.universe_status.pop('discovery_retry_seconds', None)
 
     async def run_venue(self, name, consumer):
-        tasks=[];next_discovery=0;retry_delay=1;pairs=()
+        tasks={};next_discovery=0;retry_delay=1;pairs=()
         try:
             while not self.worker.stop.is_set():
                 if self.clock()>=next_discovery:
@@ -128,6 +144,9 @@ class WebSocketRunner:
                     next_discovery=self.clock()+900 if pairs else 0
                 status=self.worker.select_venue_batch(name,pairs)
                 status['active_subscriptions']=status['selected_pairs']
+                removed=[tasks.pop(pair) for pair in list(tasks) if pair not in status['selected_pairs']]
+                for task in removed:task.cancel()
+                await asyncio.gather(*removed,return_exceptions=True)
                 if status['missing_required_pairs']:
                     self.errors[name+':valuation']='Required valuation market unavailable'
                 else:self.errors.pop(name+':valuation',None)
@@ -146,13 +165,13 @@ class WebSocketRunner:
                 retry_delay=1
                 status['state']='subscribed'
                 self.publish_venue(name,status)
-                tasks=[asyncio.create_task(self.watch(name,pair)) for pair in status['selected_pairs']]
+                for pair in status['selected_pairs']:
+                    if pair not in tasks:
+                        tasks[pair]=asyncio.create_task(self.watch(name,pair))
                 await self.pause(self.rotation,consumer)
-                for task in tasks:task.cancel()
-                await asyncio.gather(*tasks,return_exceptions=True);tasks=[]
         finally:
-            for task in tasks:task.cancel()
-            await asyncio.gather(*tasks,return_exceptions=True)
+            for task in tasks.values():task.cancel()
+            await asyncio.gather(*tasks.values(),return_exceptions=True)
 
     async def run(self):
         self.worker.config['feed_label']='CCXT Pro public WebSocket updates (paper execution)'

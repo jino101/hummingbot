@@ -64,6 +64,39 @@ class WebSocketTests(unittest.IsolatedAsyncioTestCase):
         self.client.close.assert_awaited_once()
         self.assertIn('median_event_age_ms',self.worker.universe_status['websocket'])
 
+    async def test_hot_market_is_coalesced_without_dropping_other_triangle_legs(self):
+        from dataclasses import replace
+        books=triangle()
+        for quote in books:await self.runner.publish_book(quote)
+        for sequence in range(1000):
+            await self.runner.publish_book(replace(books[0],sequence=str(sequence)))
+        self.assertEqual(self.runner.queue.qsize(),3)
+        received=[]
+        def process(quotes,errors):
+            received.extend(quotes);self.worker.stop.set()
+        self.worker.process_books=process
+        await self.runner.consume()
+        self.assertEqual({b.pair for b in received},{b.pair for b in books})
+        self.assertEqual(next(b.sequence for b in received if b.pair==books[0].pair),'999')
+
+    async def test_rotation_keeps_shared_subscriptions_alive(self):
+        started=[];rounds=[]
+        async def watch(name,pair):
+            started.append(pair);await asyncio.sleep(30)
+        async def pause(seconds,consumer):
+            rounds.append(seconds);await asyncio.sleep(.01)
+            if len(rounds)==3:self.worker.stop.set()
+        self.runner.watch=watch;self.runner.pause=pause
+        await self.runner.run()
+        self.assertEqual(len(started),3)
+        self.assertEqual(set(started),set(self.feed.rules))
+
+    async def test_unsubscribed_market_does_not_keep_a_current_feed_error(self):
+        self.runner.errors['kucoin:A-USDT']='RequestTimeout'
+        self.worker.stop.set()
+        await self.runner.watch('kucoin','A-USDT')
+        self.assertNotIn('kucoin:A-USDT',self.runner.errors)
+
     async def test_failed_discovery_retries_with_backoff_until_stopped(self):
         self.feed.pairs=lambda:(_ for _ in ()).throw(ValueError('offline'))
         delays=[]
