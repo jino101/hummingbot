@@ -1,5 +1,7 @@
 from decimal import Decimal
 from typing import Dict, Iterable, List, Optional
+import math
+import time
 
 from hummingbot.core.data_type.common import OrderType, PriceType, TradeType
 from hummingbot.jino_arbitrage.opportunity import NetworkStatus, VenueQuote
@@ -7,7 +9,22 @@ from hummingbot.jino_arbitrage.scanner import ScannerPolicy, scan_opportunities
 
 
 def _d(value) -> Decimal:
-    return value if isinstance(value, Decimal) else Decimal(str(value))
+    result=value if isinstance(value, Decimal) else Decimal(str(value))
+    if not result.is_finite():raise ValueError('Non-finite quote')
+    return result
+
+
+def provider_book_timestamp(provider, name, pair):
+    """Use actual tracker updates; a scanner invocation cannot renew a book."""
+    connector=provider.get_connector(name)
+    metrics=connector.order_book_tracker.metrics.per_pair_metrics.get(pair)
+    if metrics is None:raise ValueError('Order book update metrics missing')
+    stamps=[v for v in (metrics.last_diff_timestamp,metrics.last_snapshot_timestamp)
+            if isinstance(v,(int,float)) and math.isfinite(v) and v>0]
+    if not stamps:raise ValueError('No confirmed order book update')
+    age=time.perf_counter()-max(stamps)
+    if age<0:raise ValueError('Future order book update')
+    return provider.time()-age
 
 
 def build_provider_quotes(
@@ -30,11 +47,11 @@ def build_provider_quotes(
 
     taker_fees_pct = taker_fees_pct or {}
     networks = networks or {}
-    ts = observed_at if observed_at is not None else market_data_provider.time()
     quotes: List[VenueQuote] = []
 
     for connector in connector_names:
         try:
+            ts=observed_at if observed_at is not None else provider_book_timestamp(market_data_provider,connector,trading_pair)
             ask = market_data_provider.get_price_by_type(connector, trading_pair, PriceType.BestAsk)
             bid = market_data_provider.get_price_by_type(connector, trading_pair, PriceType.BestBid)
             ask = _d(ask)
@@ -82,7 +99,6 @@ def scan_provider_pair(
         requested_amount_base=requested_amount_base,
         taker_fees_pct=taker_fees_pct,
         networks=networks,
-        observed_at=now,
     )
     return scan_opportunities(
         quotes=quotes,
@@ -138,13 +154,13 @@ def build_provider_quotes_for_quote_amount(
         return []
 
     networks = networks or {}
-    ts = observed_at if observed_at is not None else market_data_provider.time()
     quotes: List[VenueQuote] = []
     base, quote = trading_pair.split("-")
 
     for connector_name in connector_names:
         try:
             connector = market_data_provider.get_connector(connector_name)
+            ts=observed_at if observed_at is not None else provider_book_timestamp(market_data_provider,connector_name,trading_pair)
             buy_depth = market_data_provider.get_price_for_quote_volume(
                 connector_name, trading_pair, float(quote_amount), True
             )
@@ -181,6 +197,15 @@ def build_provider_quotes_for_quote_amount(
                 is_maker=False,
             )
             taker_fee_pct = max(_d(getattr(buy_fee, "percent", 0)), _d(getattr(sell_fee, "percent", 0)))
+            def flat_quote(fee):
+                total=Decimal('0')
+                for item in fee.flat_fees:
+                    cost=_d(item.amount)
+                    if cost<0:raise ValueError('Negative fee')
+                    if item.token==quote:total+=cost
+                    elif item.token==base:total+=cost*max(buy_price,sell_price)
+                    else:raise ValueError('Fee token valuation unavailable')
+                return total
 
             quotes.append(
                 VenueQuote(
@@ -189,6 +214,8 @@ def build_provider_quotes_for_quote_amount(
                     buy_price=buy_price,
                     sell_price=sell_price,
                     taker_fee_pct=taker_fee_pct,
+                    buy_fee_pct=_d(buy_fee.percent),sell_fee_pct=_d(sell_fee.percent),
+                    buy_flat_fee_quote=flat_quote(buy_fee),sell_flat_fee_quote=flat_quote(sell_fee),
                     max_buy_base=buy_base,
                     max_sell_base=sell_base,
                     networks=networks.get(connector_name, ()),
@@ -217,7 +244,6 @@ def scan_provider_pair_for_quote_amount(
         trading_pair=trading_pair,
         quote_amount=quote_amount,
         networks=networks,
-        observed_at=now,
     )
     if not quotes:
         return []

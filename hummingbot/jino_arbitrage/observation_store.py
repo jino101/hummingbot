@@ -1,5 +1,8 @@
 import json
 import os
+import tempfile
+import fcntl
+from collections import deque
 from decimal import Decimal
 from pathlib import Path
 from typing import Any, Dict, Iterable, List
@@ -15,9 +18,15 @@ def _json_default(value: Any):
 
 def _atomic_write_json(path: Path, payload: Dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_suffix(path.suffix + ".tmp")
-    tmp.write_text(json.dumps(payload, default=_json_default, separators=(",", ":")), encoding="utf-8")
-    os.replace(tmp, path)
+    raw=json.dumps(payload,default=_json_default,separators=(',',':'),allow_nan=False)
+    with tempfile.NamedTemporaryFile(mode='w',encoding='utf-8',dir=path.parent,delete=False) as stream:
+        tmp=Path(stream.name)
+        try:
+            stream.write(raw);stream.flush();os.fsync(stream.fileno())
+        except Exception:
+            tmp.unlink(missing_ok=True);raise
+    try:os.replace(tmp,path)
+    finally:tmp.unlink(missing_ok=True)
 
 
 def persist_observation_snapshot(
@@ -31,26 +40,25 @@ def persist_observation_snapshot(
     latest = Path(latest_path)
     log.parent.mkdir(parents=True, exist_ok=True)
 
-    if log.exists() and log.stat().st_size >= max_log_bytes:
-        rotated = log.with_suffix(log.suffix + ".1")
-        try:
-            rotated.unlink(missing_ok=True)
-        except TypeError:
-            if rotated.exists():
-                rotated.unlink()
-        log.replace(rotated)
-
-    line = json.dumps(snapshot, default=_json_default, separators=(",", ":"))
-    with log.open("a", encoding="utf-8") as handle:
-        handle.write(line + "\n")
-    _atomic_write_json(latest, snapshot)
+    if not isinstance(snapshot,dict):raise ValueError('Snapshot must be an object')
+    line=json.dumps(snapshot,default=_json_default,separators=(',',':'),allow_nan=False)
+    with log.with_suffix(log.suffix+'.lock').open('a') as lock:
+        fcntl.flock(lock.fileno(),fcntl.LOCK_EX)
+        if log.exists() and log.stat().st_size>=max_log_bytes:
+            rotated=log.with_suffix(log.suffix+'.1')
+            rotated.unlink(missing_ok=True);log.replace(rotated)
+        with log.open('a',encoding='utf-8') as handle:
+            handle.write(line+'\n')
+        _atomic_write_json(latest,snapshot)
 
 
 def read_latest_observation(path: str) -> Dict[str, Any]:
     target = Path(path)
     if not target.exists():
         return {}
-    return json.loads(target.read_text(encoding="utf-8"))
+    data=json.loads(target.read_text(encoding="utf-8"))
+    if not isinstance(data,dict):raise ValueError('Snapshot must be an object')
+    return data
 
 
 def read_observation_history(path: str, limit: int = 200) -> List[Dict[str, Any]]:
@@ -60,21 +68,22 @@ def read_observation_history(path: str, limit: int = 200) -> List[Dict[str, Any]
         return []
 
     # The file is intentionally line-oriented so a partially written final line can be skipped.
-    rows: List[Dict[str, Any]] = []
+    rows=deque(maxlen=limit)
     with target.open("r", encoding="utf-8") as handle:
         for raw in handle:
             raw = raw.strip()
             if not raw:
                 continue
             try:
-                rows.append(json.loads(raw))
+                row=json.loads(raw)
+                if isinstance(row,dict):rows.append(row)
             except json.JSONDecodeError:
                 continue
-    return rows[-limit:]
+    return list(rows)
 
 
 def summarize_observations(records: Iterable[Dict[str, Any]]) -> Dict[str, Any]:
-    rows = list(records)
+    rows = [r for r in records if isinstance(r,dict)]
     profitable = 0
     opportunity_count = 0
     best_profit = None
@@ -82,9 +91,11 @@ def summarize_observations(records: Iterable[Dict[str, Any]]) -> Dict[str, Any]:
 
     for row in rows:
         for opportunity in row.get("opportunities") or []:
+            if not isinstance(opportunity,dict):continue
             opportunity_count += 1
             try:
                 value = Decimal(str(opportunity.get("expected_profit_after_rebalance_quote", "0")))
+                if not value.is_finite():continue
             except Exception:
                 value = Decimal("0")
             if value > 0:

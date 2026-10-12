@@ -55,14 +55,14 @@ def test_scanner_can_require_rebalance_transferability():
         "BTC-USDT",
         "100",
         "99",
-        networks=[NetworkStatus("ERC20", deposit_enabled=True, withdrawal_enabled=False)],
+        networks=[NetworkStatus("ERC20", deposit_enabled=False, withdrawal_enabled=True)],
     )
     sell_ok = q(
         "b",
         "BTC-USDT",
         "102",
         "103",
-        networks=[NetworkStatus("Ethereum", deposit_enabled=False, withdrawal_enabled=True)],
+        networks=[NetworkStatus("Ethereum", deposit_enabled=True, withdrawal_enabled=False)],
     )
     sell_unknown = q(
         "c",
@@ -90,14 +90,14 @@ def test_scanner_can_require_positive_profit_after_rebalance():
         "BTC-USDT",
         "100",
         "99",
-        networks=[NetworkStatus("ERC20", deposit_enabled=True, withdrawal_enabled=False)],
+        networks=[NetworkStatus("ERC20", deposit_enabled=False, withdrawal_enabled=True, withdrawal_fee_quote=Decimal("5"))],
     )
     sell_expensive = q(
         "b",
         "BTC-USDT",
         "101",
         "102",
-        networks=[NetworkStatus("Ethereum", deposit_enabled=False, withdrawal_enabled=True, withdrawal_fee_quote=Decimal("5"))],
+        networks=[NetworkStatus("Ethereum", deposit_enabled=True, withdrawal_enabled=False, withdrawal_fee_quote=Decimal("5"))],
     )
 
     out = scan_opportunities(

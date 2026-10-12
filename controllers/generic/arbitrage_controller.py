@@ -10,6 +10,7 @@ from hummingbot.strategy_v2.controllers.controller_base import ControllerBase, C
 from hummingbot.strategy_v2.executors.arbitrage_executor.data_types import ArbitrageExecutorConfig
 from hummingbot.strategy_v2.executors.data_types import ConnectorPair
 from hummingbot.strategy_v2.models.base import RunnableStatus
+from hummingbot.strategy_v2.models.executors import CloseType
 from hummingbot.strategy_v2.models.executor_actions import CreateExecutorAction, ExecutorAction
 
 
@@ -114,6 +115,9 @@ class ArbitrageController(ControllerBase):
         self.update_arbitrage_stats()
         executor_actions = []
         current_time = self.market_data_provider.time()
+        if any(e.close_type in (CloseType.FAILED, CloseType.POSITION_HOLD) for e in self.executors_info):
+            self.logger().error("Arbitrage halted after a failed leg; reconcile orders before restarting this controller")
+            return []
         if (abs(self._imbalance) >= self.config.max_executors_imbalance or
                 self._last_buy_closed_timestamp + self.config.delay_between_executors > current_time or
                 self._last_sell_closed_timestamp + self.config.delay_between_executors > current_time):

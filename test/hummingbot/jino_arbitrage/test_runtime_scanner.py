@@ -1,5 +1,7 @@
 from decimal import Decimal
 from unittest.mock import MagicMock
+from types import SimpleNamespace
+import pytest
 
 from hummingbot.core.data_type.common import PriceType
 from hummingbot.jino_arbitrage.runtime_scanner import (
@@ -11,10 +13,22 @@ from hummingbot.jino_arbitrage.runtime_scanner import (
 )
 from hummingbot.jino_arbitrage.scanner import ScannerPolicy
 
+@pytest.fixture(autouse=True)
+def update_clock(monkeypatch):
+    monkeypatch.setattr('hummingbot.jino_arbitrage.runtime_scanner.time.perf_counter',lambda:500.0)
+
+
+def confirmed_metrics(connector):
+    connector.order_book_tracker.metrics.per_pair_metrics={p:SimpleNamespace(last_diff_timestamp=500.0,last_snapshot_timestamp=0.0)
+                                                         for p in ('BTC-USDT','ETH-USDT')}
+
 
 def provider_with_prices():
     provider = MagicMock()
     provider.time.return_value = 1000.0
+    connectors={name:MagicMock() for name in ('binance_paper_trade','kucoin_paper_trade')}
+    for connector in connectors.values():confirmed_metrics(connector)
+    provider.get_connector.side_effect=lambda name:connectors[name]
 
     def price(connector, pair, price_type):
         data = {
@@ -131,8 +145,10 @@ def test_amount_aware_read_only_scanner_uses_depth_and_fees():
     connectors = {}
     for name in ("binance", "kucoin"):
         connector = MagicMock()
+        confirmed_metrics(connector)
         fee = MagicMock()
         fee.percent = Decimal("0.001")
+        fee.flat_fees=[]
         connector.get_fee.return_value = fee
         connectors[name] = connector
     provider.get_connector.side_effect = lambda name: connectors[name]
@@ -176,3 +192,18 @@ def test_amount_aware_read_only_scanner_skips_bad_connector():
         Decimal("25"),
     )
     assert quotes == []
+
+
+def test_cached_books_cannot_be_refreshed_by_scanning():
+    provider=provider_with_prices()
+    for name in ('binance_paper_trade','kucoin_paper_trade'):
+        provider.get_connector(name).order_book_tracker.metrics.per_pair_metrics['BTC-USDT'].last_diff_timestamp=490
+    result=scan_provider_pair(provider,['binance_paper_trade','kucoin_paper_trade'],'BTC-USDT',Decimal('.1'),
+                              ScannerPolicy(max_quote_age_seconds=3))
+    assert result==[]
+
+
+def test_missing_update_metrics_fail_closed():
+    provider=provider_with_prices()
+    provider.get_connector('binance_paper_trade').order_book_tracker.metrics.per_pair_metrics={}
+    assert build_provider_quotes(provider,['binance_paper_trade'],'BTC-USDT',Decimal('.1'))==[]

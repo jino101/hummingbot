@@ -72,3 +72,14 @@ This stage can inspect authenticated balances/network metadata while `determine_
 ## Android
 
 The `Jino Android` GitHub workflow builds `jino-android-debug` as an APK artifact. The app accepts only an HTTPS dashboard URL and does not store exchange API keys.
+
+
+## 6 October 2026 extension
+
+The existing controller/mobile/Android stack is preserved. See
+[JIN integration audit](jin/README.md) for triangular paper bots, shared virtual
+5-USDT allocations with a persistent 10% daily cutoff, reinvestment, replay, a
+supplemental dashboard on port 8788, WebSocket bridge and executor/network fixes.
+The new dashboard reads this stack's observation file and can engage its runtime
+kill switch. Its reset affects only the new paper ledger. Real multi-bot portfolio
+supervision, live triangular execution, stocks/Forex and a permanent host remain open.

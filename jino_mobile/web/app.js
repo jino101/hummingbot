@@ -5,6 +5,7 @@ const apiFetch = (path, options={}) => fetch(path, {
   cache: "no-store",
   headers: {...(options.headers || {}), Authorization: `Bearer ${accessToken}`}
 });
+const escapeHtml = value => String(value ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 const fmt = (v, n=4) => {
   const x = Number(v);
   return Number.isFinite(x) ? x.toFixed(n) : "–";
@@ -23,8 +24,8 @@ function renderBest(opportunities) {
   box.innerHTML = `
     <div class="opp">
       <div>
-        <strong>${o.trading_pair || ""}</strong><br>
-        <span class="muted">Kaufen ${o.buy_exchange} @ ${fmt(o.buy_price,2)} · Verkaufen ${o.sell_exchange} @ ${fmt(o.sell_price,2)}</span>
+        <strong>${escapeHtml(o.trading_pair)}</strong><br>
+        <span class="muted">Kaufen ${escapeHtml(o.buy_exchange)} @ ${fmt(o.buy_price,2)} · Verkaufen ${escapeHtml(o.sell_exchange)} @ ${fmt(o.sell_price,2)}</span>
       </div>
       <strong class="${profit > 0 ? "good" : "bad"}">${fmt(profit,4)} USDT</strong>
     </div>
@@ -42,7 +43,7 @@ function renderHistory(records) {
   box.innerHTML = records.slice(-30).reverse().map(r => {
     const count = (r.opportunities || []).length;
     const when = r.timestamp ? new Date(Number(r.timestamp)*1000).toLocaleString() : "–";
-    return `<div class="hist"><strong>${when}</strong> · ${count} Chancen · ${r.trading_pair || "–"} · ${r.mode || "–"}</div>`;
+    return `<div class="hist"><strong>${when}</strong> · ${count} Chancen · ${escapeHtml(r.trading_pair || "–")} · ${escapeHtml(r.mode || "–")}</div>`;
   }).join("");
 }
 
@@ -53,6 +54,7 @@ async function refresh() {
       apiFetch("/api/summary"),
       apiFetch("/api/history"),
     ]);
+    if (![statusRes, summaryRes, historyRes].every(response => response.ok)) throw new Error("Dashboard authentication or API failed");
     const status = await statusRes.json();
     const summary = await summaryRes.json();
     const history = await historyRes.json();
@@ -60,8 +62,10 @@ async function refresh() {
     $("mode").textContent = status.mode || "offline";
     $("pair").textContent = status.trading_pair || "–";
     const readiness = status.readiness || {};
-    $("marketReady").textContent = readiness.market_data_ready === true ? "ONLINE" : "WARTET";
-    $("marketReady").className = "big " + (readiness.market_data_ready === true ? "good" : "bad");
+    const age = Date.now()/1000 - Number(status.timestamp || 0);
+    const fresh = age >= 0 && age <= 60;
+    $("marketReady").textContent = !fresh ? "VERALTET" : readiness.market_data_ready === true ? "ONLINE" : "WARTET";
+    $("marketReady").className = "big " + (fresh && readiness.market_data_ready === true ? "good" : "bad");
     $("transfer").textContent = readiness.transfer_route_verified === true ? "JA" : "NEIN";
     $("opps").textContent = (status.opportunities || []).length;
     $("samples").textContent = summary.samples || 0;
