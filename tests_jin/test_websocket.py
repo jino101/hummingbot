@@ -97,6 +97,20 @@ class WebSocketTests(unittest.IsolatedAsyncioTestCase):
         await self.runner.watch('kucoin','A-USDT')
         self.assertNotIn('kucoin:A-USDT',self.runner.errors)
 
+    async def test_silent_feed_publishes_failure_and_expires_cached_books(self):
+        from dataclasses import replace
+        stale=replace(triangle()[0],timestamp=time.time()-10)
+        self.runner.books[(stale.exchange,stale.pair)]=stale
+        self.runner.errors['kucoin:A-USDT']='RequestTimeout'
+        observed=[]
+        def process(quotes,errors):
+            observed.append((quotes,errors));self.worker.stop.set()
+        self.worker.process_books=process
+        await asyncio.wait_for(self.runner.consume(),1.5)
+        self.assertEqual(observed,[([],['kucoin:A-USDT: RequestTimeout'])])
+        self.assertEqual(self.worker.universe_status['websocket']['fresh_books'],0)
+        self.assertEqual(self.runner.books,{})
+
     async def test_failed_discovery_retries_with_backoff_until_stopped(self):
         self.feed.pairs=lambda:(_ for _ in ()).throw(ValueError('offline'))
         delays=[]

@@ -74,8 +74,11 @@ class WebSocketRunner:
     async def consume(self):
         while not self.worker.stop.is_set():
             try:item=await asyncio.wait_for(self.queue.get(),timeout=1)
-            except asyncio.TimeoutError:continue
-            pending=[item]
+            except asyncio.TimeoutError:
+                # A disconnected or silent feed must still publish its errors
+                # and expire old books without renewing their timestamps.
+                pending=[]
+            else:pending=[item]
             while not self.queue.empty():pending.append(self.queue.get_nowait())
             notices=[];received={}
             for kind,value in pending:

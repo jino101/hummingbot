@@ -94,8 +94,11 @@ class Worker:
 
     def select_venue_batch(self, exchange, pairs):
         priorities = self.required_pairs(exchange)
+        strategies = {spec.get('strategy', 'triangular') for spec in self.config['bots'].values()
+                      if spec['exchange'] == exchange}
         plan = plan_venue_batches({exchange: pairs}, self.config.get('batch_size', 12),
-                                 self.config.get('deny_pairs', ()), {exchange: priorities})[exchange]
+                                 self.config.get('deny_pairs', ()), {exchange: priorities},
+                                 triangle_only=strategies == {'triangular'})[exchange]
         batches = plan.pop('batches')
         index = self.batch_indices.get(exchange, 0) % len(batches) if batches else 0
         if batches:

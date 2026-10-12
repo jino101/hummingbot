@@ -51,6 +51,13 @@ Bewertung vorhandener Bestände gelesen werden. Vollständige Dreiecke und
 Bewertungspaare teilen sich maximal 20 Abonnements pro Börse; Kapazitätsmangel
 wird angezeigt und blockiert neue Ausführungen.
 
+Für Börsen mit ausschließlich Dreiecks-Bots rotiert der Dienst nur vollständige
+Dreiecke und benötigte Bewertungspaare. Einzelne USDT-Märkte ohne Dreiecksroute
+werden weiter im Katalog gezählt, beanspruchen aber keine Handelsrotation.
+Bei gemischten Strategien bleibt die zusätzliche Einzelmarktplanung erhalten.
+Auch ohne neue Kurse veröffentlicht der WebSocket-Verbraucher seinen Fehlerstatus
+und entfernt abgelaufene Bücher; dabei werden keine Kurszeitstempel erneuert.
+
 Nach dem öffentlichen Verbindungstest und der lokalen Testsuite den Paperbot
 über die Bot-Zentrale starten und den [24-Stunden-Monitor](PAPER-ACCEPTANCE.md)
 ausführen. Wiederanlauf, Teilfüllungen, unbekannte Orders und Not-Aus bleiben

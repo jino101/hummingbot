@@ -38,6 +38,37 @@ class UniverseTests(unittest.TestCase):
         batches = plan_batches({'a': ['A-USDT', 'A-BTC', 'BTC-USDT']}, denied=['A-USDT'])
         self.assertEqual(batches, [('BTC-USDT',)])
 
+    def test_triangle_only_does_not_join_venues_or_keep_denied_routes(self):
+        self.assertEqual(plan_batches({'a': ['A-USDT', 'A-BTC'], 'b': ['BTC-USDT']},
+                                      triangle_only=True), [])
+        self.assertEqual(plan_batches({'a': ['A-USDT', 'A-BTC', 'BTC-USDT']},
+                                      denied=['A-USDT'], triangle_only=True), [])
+
+    def test_triangle_only_without_routes_keeps_required_valuations_only(self):
+        pairs = ['A-USDT', 'B-USDT', 'C-USDT']
+        self.assertEqual(plan_batches({'kucoin': pairs}), [tuple(pairs)])
+        self.assertEqual(plan_batches({'kucoin': pairs}, triangle_only=True), [])
+        empty = plan_venue_batches({'kucoin': pairs}, triangle_only=True)['kucoin']
+        self.assertEqual(empty['batches'], [])
+        self.assertEqual(empty['scheduled_pairs'], 0)
+        priorities = plan_venue_batches({'kucoin': pairs}, denied=['B-USDT'],
+                                       required={'kucoin': ['B-USDT', 'MISSING-USDT']},
+                                       triangle_only=True)['kucoin']
+        self.assertEqual(priorities['batches'], [('B-USDT',)])
+        self.assertEqual(priorities['missing_required_pairs'], ('MISSING-USDT',))
+
+    def test_triangle_only_preserves_twenty_slot_bound_and_all_complete_routes(self):
+        required = tuple(f'V{i}-USDT' for i in range(17))
+        routes = ({'A-USDT', 'B-A', 'B-USDT'}, {'C-USDT', 'D-C', 'D-USDT'})
+        pairs = set(required) | set.union(*routes) | {f'ISOLATED{i}-USDT' for i in range(60)}
+        plan = plan_venue_batches({'kucoin': pairs}, 12, denied=required,
+                                 required={'kucoin': required}, triangle_only=True)['kucoin']
+        self.assertFalse(plan['capacity_exhausted'])
+        self.assertEqual(plan['batch_count'], 2)
+        self.assertTrue(all(len(batch) == 20 and set(required) <= set(batch) for batch in plan['batches']))
+        for route in routes:
+            self.assertTrue(any(route <= set(batch) for batch in plan['batches']))
+
     def test_scanner_large_disconnected_universe_and_original_profit(self):
         books = triangle()
         now = time.time()
@@ -94,9 +125,28 @@ class UniverseTests(unittest.TestCase):
 class AutoWorkerTests(unittest.TestCase):
     setUp = test_feeds_worker.WorkerTests.setUp
     tearDown = test_feeds_worker.WorkerTests.tearDown
+
+    def test_triangular_venue_skips_isolated_usdt_batches_and_keeps_every_triangle(self):
+        self.config['batch_size'] = 3
+        routes = ({'A-USDT', 'B-A', 'B-USDT'}, {'C-USDT', 'D-C', 'D-USDT'})
+        pairs = set.union(*routes) | {f'ISOLATED{i}-USDT' for i in range(60)}
+        first = self.worker.select_venue_batch('kucoin', pairs)
+        selections = [set(first['selected_pairs'])]
+        for _ in range(first['batch_count'] - 1):
+            selections.append(set(self.worker.select_venue_batch('kucoin', pairs)['selected_pairs']))
+        self.assertTrue(all(any(route <= batch for route in routes) for batch in selections),
+                        'A triangular bot must never rotate into an isolated USDT-only batch')
+        self.assertEqual(first['scheduled_pairs'], 6)
+        self.assertEqual(first['batch_count'], 2)
+        for route in routes:
+            self.assertTrue(any(route <= batch for batch in selections))
+
     def test_rotation_and_discovery_failure_closed(self):
         self.worker.config['pair_mode'] = 'auto'
         self.worker.config['batch_size'] = 3
+        # Directional venues retain the existing singleton coverage policy.
+        for spec in self.config['bots'].values():
+            spec.update(strategy='momentum', pair='C0-USDT')
         received = []
         pairs = [f'C{i}-USDT' for i in range(7)]
         for feed in self.worker.feeds.values():
@@ -113,6 +163,36 @@ class AutoWorkerTests(unittest.TestCase):
         state = self.store.snapshot()
         self.assertEqual(len(state['trades']), 0)
         self.assertEqual(len(state['bots'][0]['status']['errors']), 3)
+
+    def test_mixed_strategy_venue_preserves_singletons_and_independent_rotation(self):
+        self.config['batch_size'] = 3
+        routes = {'A-USDT', 'B-A', 'B-USDT'}
+        pairs = routes | {f'ISOLATED{i}-USDT' for i in range(20)}
+        self.config['bots']['kucoin-momentum'] = {
+            'exchange': 'kucoin', 'strategy': 'momentum', 'pair': 'ISOLATED0-USDT', 'budget': '1'}
+        first = self.worker.select_venue_batch('kucoin', pairs)
+        seen = set(first['selected_pairs'])
+        for _ in range(first['batch_count'] - 1):
+            seen.update(self.worker.select_venue_batch('kucoin', pairs)['selected_pairs'])
+        self.assertEqual(seen, pairs)
+        self.assertEqual(first['scheduled_pairs'], len(pairs))
+        # Binance still has only a triangular bot, regardless of KuCoin's strategy.
+        other = self.worker.select_venue_batch('binance', pairs)
+        self.assertEqual(set(other['selected_pairs']), routes)
+        self.assertEqual(other['batch_count'], 1)
+        self.assertEqual(other['batch_number'], 1)
+
+    def test_triangular_worker_without_routes_reports_empty_then_valuation_only(self):
+        pairs = ('A-USDT', 'B-USDT')
+        empty = self.worker.select_venue_batch('kucoin', pairs)
+        self.assertEqual(empty['state'], 'empty')
+        self.assertEqual(empty['selected_pairs'], ())
+        with self.worker.portfolio.db() as db:
+            db.execute('INSERT INTO paper_wallets VALUES (?,?,?)', ('kucoin-triangle', 'A', '1'))
+        self.config['deny_pairs'] = ['A-USDT']
+        valuation = self.worker.select_venue_batch('kucoin', pairs)
+        self.assertEqual(valuation['selected_pairs'], ('A-USDT',))
+        self.assertEqual(valuation['valuation_priority_pairs'], ('A-USDT',))
 
     def test_kucoin_receives_a_complete_batch_every_cycle_among_larger_foreign_catalogues(self):
         self.config['pair_mode']='auto';self.config['batch_size']=3

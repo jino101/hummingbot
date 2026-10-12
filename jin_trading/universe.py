@@ -23,18 +23,20 @@ def route_groups(pairs, start="USDT"):
     return sorted(groups, key=lambda group: (-len(group), group))
 
 
-def plan_batches(venue_pairs, batch_size=12, denied=()):
+def plan_batches(venue_pairs, batch_size=12, denied=(), *, triangle_only=False):
     """All supported USDT pairs and triangles; no arbitrary coin-count cap.
 
     Never construct a triangle from edges on different exchanges.
     A singleton also supplies cross-exchange comparison when shared by venues.
+    triangle_only omits those singletons for dedicated triangular strategies.
     """
     if not 3 <= batch_size <= 20:
         raise ValueError("Batch size must be 3–20")
     denied = set(denied)
     groups = set()
     for pairs in venue_pairs.values():
-        groups.update(route_groups(set(pairs) - denied))
+        groups.update(group for group in route_groups(set(pairs) - denied)
+                      if not triangle_only or len(group) == 3)
     batches, current = [], set()
     for group in sorted(groups, key=lambda group: (-len(group), group)):
         if len(current | set(group)) > batch_size:
@@ -46,12 +48,13 @@ def plan_batches(venue_pairs, batch_size=12, denied=()):
     return batches
 
 
-def plan_venue_batches(venue_pairs, batch_size=12, denied=(), required=None):
+def plan_venue_batches(venue_pairs, batch_size=12, denied=(), required=None, *, triangle_only=False):
     """Independent complete-route plans, including valuation markets within 20 slots.
 
     Required markets remain observable even when denied for new trades. More
     than 17 priorities leave no guaranteed room for an independent triangle;
     expose that limit instead of truncating a trading route.
+    triangle_only limits rotation to complete triangles, retaining priorities.
     """
     if isinstance(batch_size, bool) or not isinstance(batch_size, int) or not 3 <= batch_size <= 20:
         raise ValueError('Batch size must be 3–20')
@@ -67,7 +70,8 @@ def plan_venue_batches(venue_pairs, batch_size=12, denied=(), required=None):
             batches = [available[:20]] if available else []
         else:
             capacity = max(batch_size, len(priorities) + 3) - len(priorities)
-            rotating = plan_batches({exchange: catalogue}, capacity, denied)
+            rotating = plan_batches({exchange: catalogue}, capacity, denied,
+                                    triangle_only=triangle_only)
             batches = []
             for batch in rotating:
                 # Put a complete group first rather than scattering its legs

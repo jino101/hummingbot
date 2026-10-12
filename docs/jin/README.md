@@ -16,6 +16,8 @@ Der [Audit](AUDIT-2026-10-07.md) dokumentiert den ursprünglichen Prüfstand.
 - Automatischer Katalog aller unterstützten aktiven Binance-, KuCoin- und
   Bitget-Spotmärkte, soweit sie für USDT-Routen erreichbar sind. Rotierende,
   vollständige Dreiecksgruppen; keine feste Gesamt-Coin-Grenze.
+  Reine Dreiecks-Bots abonnieren daraus vollständige Routen und benötigte
+  Bewertungspaare; isolierte USDT-Märkte beanspruchen keine Dreiecksrotation.
 - REST und optional CCXT-Pro-WebSocket-Daten. Abfragen/Subscriptions bleiben
   begrenzt; nicht alle Märkte werden gleichzeitig überwacht. Ein langsamer
   Anbieter hält frische Routen eines anderen nicht auf.
