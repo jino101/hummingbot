@@ -10,6 +10,7 @@ from urllib.request import Request, urlopen
 
 from jin_trading.server import make_server
 from jin_trading.store import Store
+from jin_trading.runtime import start_worker
 
 
 class ServerTests(unittest.TestCase):
@@ -24,7 +25,24 @@ class ServerTests(unittest.TestCase):
         self.url='http://127.0.0.1:'+str(self.server.server_port)
 
     def tearDown(self):
+        if self.server.worker:
+            self.server.worker.stop.set()
+        if self.server.runtime.thread:
+            self.server.runtime.thread.join(timeout=2)
         self.server.shutdown();self.thread.join();self.server.server_close();self.tmp.cleanup()
+
+    def start_paper_worker(self):
+        from jin_trading.worker import Worker,load_config
+        from test_arbitrage import triangle
+        config=load_config('jin_trading/config.5usdt.json');config['bots']={'bot':{'exchange':'kucoin','budget':'5'}}
+        self.server.worker=Worker(self.store,config)
+        entered=threading.Event()
+        def target():
+            entered.set()
+            self.server.worker.stop.wait()
+        start_worker(self.server,target)
+        self.assertTrue(entered.wait(2))
+        self.server.worker.process_books(triangle(),[])
 
     def request(self,path,method='GET',auth=True,data=None):
         headers={'Authorization':'Bearer '+self.token} if auth else {}
@@ -42,6 +60,7 @@ class ServerTests(unittest.TestCase):
         with self.request('/api/trades.csv') as response:self.assertIn(b'bot',response.read())
 
     def test_controls_emergency_and_bad_paths(self):
+        self.start_paper_worker()
         with self.request('/api/bots/bot/start','POST') as response:self.assertTrue(json.load(response)['bots'][0]['enabled'])
         with self.request('/api/halt','POST') as response:self.assertTrue(json.load(response)['halt'])
         with self.assertRaises(HTTPError):self.request('/api/bots/bot/start','POST')
@@ -51,6 +70,19 @@ class ServerTests(unittest.TestCase):
             with self.assertRaises(HTTPError):self.request(path,'POST')
         with self.assertRaises(HTTPError):self.request('/api/state','POST',data=b'{}')
         with self.assertRaises(HTTPError):self.request('/unknown')
+
+    def test_start_uses_selected_bot_readiness(self):
+        self.start_paper_worker()
+        snapshot = self.server.runtime.snapshot
+        def another_bot_is_not_ready():
+            value = snapshot()
+            value.update(ready=False, reason='market_data_missing')
+            value['bots']['other'] = {'ready':False,'reason':'market_data_missing'}
+            return value
+        self.server.runtime.snapshot = another_bot_is_not_ready
+        with self.request('/api/bots/bot/start','POST') as response:
+            self.assertTrue(json.load(response)['bots'][0]['enabled'])
+        with self.assertRaises(HTTPError):self.request('/api/bots/other/start','POST')
 
     def test_short_token_rejected(self):
         with self.assertRaises(ValueError):make_server(self.store,'weak',port=0)
@@ -82,15 +114,54 @@ class ServerTests(unittest.TestCase):
         with self.request('/healthz',auth=False) as response:self.assertEqual(response.status,200)
 
     def test_worker_journal_state_and_reconcile_endpoint(self):
-        from jin_trading.worker import Worker,load_config
-        config=load_config('jin_trading/config.example.json');config['bots']={'bot':{'exchange':'kucoin','budget':'5'}}
-        self.server.worker=Worker(self.store,config)
+        self.start_paper_worker()
         with self.request('/api/state') as response:
             state=json.load(response);self.assertIn('portfolio',state);self.assertIn('growth',state)
         with self.request('/api/orders') as response:self.assertEqual(json.load(response),[])
         with self.request('/api/reconcile','POST') as response:self.assertEqual(json.load(response),[])
         with self.request('/api/bots/bot/start','POST') as response:self.assertEqual(response.status,200)
         with self.request('/api/halt','POST') as response:self.assertTrue(json.load(response)['portfolio']['halt'])
+
+    def test_liveness_does_not_hide_disabled_worker_and_runtime_is_private(self):
+        with self.request('/healthz',auth=False) as response:self.assertEqual(response.status,200)
+        with self.assertRaises(HTTPError) as caught:self.request('/readyz',auth=False)
+        self.assertEqual(caught.exception.code,503)
+        self.assertEqual(json.load(caught.exception),{'service':'jin','ready':False})
+        with self.assertRaises(HTTPError) as caught:self.request('/api/runtime',auth=False)
+        self.assertEqual(caught.exception.code,401)
+        with self.request('/api/runtime') as response:
+            self.assertEqual(json.load(response)['reason'],'worker_disabled')
+        with self.assertRaises(HTTPError) as caught:self.request('/api/bots/bot/start','POST')
+        self.assertEqual(caught.exception.code,400)
+        self.assertFalse(self.store.snapshot()['bots'][0]['enabled'])
+
+    def test_fresh_cash_account_without_started_worker_cannot_start_bot(self):
+        from jin_trading.worker import Worker,load_config
+        from jin_trading.runtime import WorkerRuntime
+        config=load_config('jin_trading/config.5usdt.json');config['bots']={'bot':{'exchange':'kucoin','budget':'5'}}
+        self.server.worker=Worker(self.store,config)
+        self.server.runtime=WorkerRuntime(self.server.worker)
+        self.assertTrue(self.server.worker.portfolio.snapshot()['ready'])
+        with self.request('/api/state') as response:
+            self.assertEqual(json.load(response)['runtime']['reason'],'worker_disabled')
+        with self.assertRaises(HTTPError):self.request('/api/bots/bot/start','POST')
+        self.assertFalse(self.store.snapshot()['bots'][0]['enabled'])
+
+    def test_readiness_tracks_fresh_data_halt_and_worker_exit(self):
+        self.start_paper_worker()
+        with self.request('/readyz',auth=False) as response:self.assertTrue(json.load(response)['ready'])
+        with self.request('/api/state') as response:
+            state=json.load(response)
+            self.assertTrue(state['runtime']['ready'])
+            self.assertFalse(state['bots'][0]['enabled'])
+        self.server.runtime.clock=lambda: self.server.runtime.processed_at+10
+        with self.assertRaises(HTTPError) as caught:self.request('/readyz',auth=False)
+        self.assertEqual(caught.exception.code,503)
+        with self.assertRaises(HTTPError):self.request('/api/bots/bot/start','POST')
+        self.server.worker.stop.set();self.server.runtime.thread.join(timeout=2)
+        with self.request('/api/runtime') as response:
+            self.assertEqual(json.load(response)['reason'],'worker_stopped')
+        with self.request('/healthz',auth=False) as response:self.assertEqual(response.status,200)
 
     def test_inventory_acceptance_requires_terminal_orders_and_keeps_latch(self):
         from jin_trading.worker import Worker,load_config
@@ -119,3 +190,4 @@ class ServerTests(unittest.TestCase):
         with self.request('/api/existing/status') as response:self.assertFalse(json.load(response)['available'])
         with self.request('/api/halt','POST') as response:self.assertTrue(kill.exists())
         with self.request('/api/reset','POST') as response:self.assertTrue(kill.exists())
+

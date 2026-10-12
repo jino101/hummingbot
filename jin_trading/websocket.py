@@ -10,7 +10,6 @@ import time
 from decimal import Decimal
 
 from jin_trading.arbitrage import Book,number
-from jin_trading.universe import plan_batches
 
 
 def snapshot(exchange,pair,raw,rule,fee,received_at=None):
@@ -30,6 +29,7 @@ class WebSocketRunner:
         if set(clients)!=set(worker.feeds):raise ValueError('WebSocket clients must match configured exchanges')
         self.worker,self.clients,self.rotation=worker,clients,rotation_seconds
         self.queue=asyncio.Queue(maxsize=200);self.books={};self.errors={};self.latencies=[];self.sequences={}
+        self.clock=time.monotonic
 
     async def watch(self,exchange,pair):
         client=self.clients[exchange];key=(exchange,pair);previous=self.sequences.get(key);delay=1
@@ -52,7 +52,7 @@ class WebSocketRunner:
                     self.queue.put_nowait(quote)
                     self.errors.pop(exchange+':'+pair,None)
                     if raw.get('timestamp') is not None:
-                        self.latencies.append(max(0,(received-quote.timestamp)*1000));self.latencies=self.latencies[-500:]
+                        self.latencies.append((received-quote.timestamp)*1000);self.latencies=self.latencies[-500:]
                 except asyncio.CancelledError:raise
                 except Exception as exc:
                     self.errors[exchange+':'+pair]=type(exc).__name__
@@ -66,73 +66,104 @@ class WebSocketRunner:
         while not self.worker.stop.is_set():
             try:quote=await asyncio.wait_for(self.queue.get(),timeout=1)
             except asyncio.TimeoutError:continue
-            self.books[quote.exchange,quote.pair]=quote
-            now=time.time();fresh=[b for b in self.books.values() if 0<=now-b.timestamp<=self.worker.config['max_age']]
+            notice = quote[1] if isinstance(quote, tuple) and quote[0] == 'status' else None
+            if notice is None:
+                self.books[quote.exchange,quote.pair]=quote
+            now=time.time();future=[b for b in self.books.values() if b.timestamp>now]
+            fresh=[b for b in self.books.values() if 0<=now-b.timestamp<=self.worker.config['max_age']]
             self.books={(b.exchange,b.pair):b for b in fresh}
             self.worker.universe_status['websocket']={'fresh_books':len(fresh),'queue':self.queue.qsize(),
                 'samples':len(self.latencies),'median_event_age_ms':sorted(self.latencies)[len(self.latencies)//2] if self.latencies else None}
-            await asyncio.to_thread(self.worker.process_books,fresh,[a+': '+e for a,e in self.errors.items()])
+            for name, row in list(self.worker.universe_status.get('venues', {}).items()):
+                status = dict(row, fresh_books=sum(b.exchange == name for b in fresh),
+                              future_books=sum(b.exchange == name for b in future),
+                              max_future_seconds=max((b.timestamp-now for b in future if b.exchange==name),default=0))
+                if notice is None and quote.exchange == name:
+                    status['books_received'] = status.get('books_received', 0) + 1
+                self.publish_venue(name, status)
+            errors=([notice] if notice else [])+[a+': '+e for a,e in self.errors.items()]
+            await asyncio.to_thread(self.worker.process_books,fresh,errors)
 
-    async def discover(self):
-        venue_pairs={}
-        for name,feed in self.worker.feeds.items():
+    async def discover(self, names=None):
+        async def venue(name):
+            feed = self.worker.feeds[name]
             try:
-                venue_pairs[name]=await asyncio.to_thread(feed.pairs)
-                await self.clients[name].load_markets(reload=True)
+                pairs=await asyncio.to_thread(feed.pairs)
+                await asyncio.wait_for(self.clients[name].load_markets(reload=True), timeout=20)
                 self.errors.pop(name+':discovery',None)
+                return name, pairs
             except Exception as exc:
-                venue_pairs[name]=();self.errors[name+':discovery']=type(exc).__name__
-        return venue_pairs
+                self.errors[name+':discovery']=type(exc).__name__
+                return name, ()
+        return dict(await asyncio.gather(*(venue(name) for name in (names or self.worker.feeds))))
 
-    async def run(self):
-        consumer=asyncio.create_task(self.consume());tasks=[]
+    async def pause(self, seconds, consumer):
+        """Wait with bounded shutdown latency and surface consumer failures."""
+        end = self.clock() + seconds
+        while not self.worker.stop.is_set() and self.clock() < end:
+            if consumer.done():
+                consumer.result()
+                raise RuntimeError('WebSocket consumer stopped unexpectedly')
+            await asyncio.sleep(min(.2, max(0, end - self.clock())))
+
+    def publish_venue(self, name, status):
+        self.worker.publish_venue_status(name, status)
+        venues = self.worker.universe_status['venues']
+        subscriptions = {name: row.get('active_subscriptions', ()) for name, row in venues.items()
+                         if row.get('active_subscriptions')}
+        self.worker.universe_status.update(active_subscriptions=subscriptions,
+            discovery_errors=dict(self.errors), coverage='Independent bounded WebSocket subscriptions per exchange')
+        retries = [row['discovery_retry_seconds'] for row in venues.values() if 'discovery_retry_seconds' in row]
+        if retries and not subscriptions:
+            self.worker.universe_status['discovery_retry_seconds'] = min(retries)
+        else:
+            self.worker.universe_status.pop('discovery_retry_seconds', None)
+
+    async def run_venue(self, name, consumer):
+        tasks=[];next_discovery=0;retry_delay=1;pairs=()
         try:
-            venue_pairs=await self.discover();next_discovery=time.monotonic()+900
-            batches=plan_batches(venue_pairs,self.worker.config.get('batch_size',12),self.worker.config.get('deny_pairs',[]))
-            if not batches:
-                await asyncio.to_thread(self.worker.process_books,[],['No supported WebSocket route discovered'])
-            self.worker.config['feed_label']='CCXT Pro public WebSocket updates (paper execution)'
-            index=0
-            while batches and not self.worker.stop.is_set():
-                if time.monotonic()>=next_discovery:
-                    venue_pairs=await self.discover();next_discovery=time.monotonic()+900
-                    batches=plan_batches(venue_pairs,self.worker.config.get('batch_size',12),self.worker.config.get('deny_pairs',[]))
-                    if not batches:
-                        await asyncio.to_thread(self.worker.process_books,[],['No supported WebSocket route discovered'])
-                        break
-                pairs=batches[index%len(batches)];index+=1
-                self.worker.universe_status.update({'mode':'auto','catalogue_pairs':{n:len(p) for n,p in venue_pairs.items()},
-                    'batch_count':len(batches),'batch_number':(index-1)%len(batches)+1,'selected_pairs':pairs,
-                    'coverage':'Rotating bounded WebSocket subscriptions'})
-                subscriptions={}
-                for name in self.clients:
-                    required=self.worker.required_pairs(name)
-                    missing=[pair for pair in required if pair not in venue_pairs[name]]
-                    if missing:self.errors[name+':valuation']='Required valuation market unavailable'
-                    else:self.errors.pop(name+':valuation',None)
-                    if len(required)>17:
-                        self.errors[name+':capacity']='Too many inventory markets for bounded subscriptions'
-                        chosen=required[:20]
-                    else:
-                        self.errors.pop(name+':capacity',None)
-                        budget=max(self.worker.config.get('batch_size',12),len(required)+3)
-                        capacity=budget-len(required)
-                        groups=plan_batches({name:venue_pairs[name]},capacity,self.worker.config.get('deny_pairs',[]))
-                        rotating=groups[(index-1)%len(groups)] if groups else ()
-                        chosen=tuple(dict.fromkeys((*required,*rotating)))
-                    subscriptions[name]=tuple(pair for pair in chosen if pair in venue_pairs[name])
-                self.worker.universe_status['active_subscriptions']=subscriptions
-                self.worker.universe_status['valuation_priority_pairs']={name:self.worker.required_pairs(name) for name in self.clients}
-                tasks=[asyncio.create_task(self.watch(name,pair)) for name,markets in subscriptions.items() for pair in markets]
-                end=time.monotonic()+self.rotation
-                while not self.worker.stop.is_set() and time.monotonic()<end:
-                    await asyncio.sleep(.2)
-                    if consumer.done():consumer.result()
+            while not self.worker.stop.is_set():
+                if self.clock()>=next_discovery:
+                    pairs=(await self.discover((name,)))[name]
+                    next_discovery=self.clock()+900 if pairs else 0
+                status=self.worker.select_venue_batch(name,pairs)
+                status['active_subscriptions']=status['selected_pairs']
+                if status['missing_required_pairs']:
+                    self.errors[name+':valuation']='Required valuation market unavailable'
+                else:self.errors.pop(name+':valuation',None)
+                if status['capacity_exhausted']:
+                    self.errors[name+':capacity']='Too many inventory markets for bounded subscriptions'
+                else:self.errors.pop(name+':capacity',None)
+                if not status['selected_pairs']:
+                    status.update(state='discovery_failed' if name+':discovery' in self.errors else 'empty',
+                        discovery_retry_seconds=retry_delay, error=self.errors.get(name+':discovery'))
+                    self.publish_venue(name,status)
+                    # Only the consumer calls process_books, including empty-feed status.
+                    await self.queue.put(('status', 'No supported WebSocket route discovered: '+name))
+                    await self.pause(retry_delay,consumer)
+                    retry_delay=min(retry_delay*2,30);next_discovery=0
+                    continue
+                retry_delay=1
+                status['state']='subscribed'
+                self.publish_venue(name,status)
+                tasks=[asyncio.create_task(self.watch(name,pair)) for pair in status['selected_pairs']]
+                await self.pause(self.rotation,consumer)
                 for task in tasks:task.cancel()
                 await asyncio.gather(*tasks,return_exceptions=True);tasks=[]
         finally:
             for task in tasks:task.cancel()
-            consumer.cancel();await asyncio.gather(*tasks,consumer,return_exceptions=True)
+            await asyncio.gather(*tasks,return_exceptions=True)
+
+    async def run(self):
+        self.worker.config['feed_label']='CCXT Pro public WebSocket updates (paper execution)'
+        self.worker.universe_status['mode']='auto'
+        consumer=asyncio.create_task(self.consume())
+        venues=[asyncio.create_task(self.run_venue(name,consumer)) for name in self.clients]
+        try:
+            await asyncio.gather(*venues)
+        finally:
+            for task in venues:task.cancel()
+            consumer.cancel();await asyncio.gather(*venues,consumer,return_exceptions=True)
             await asyncio.gather(*(client.close() for client in self.clients.values()),return_exceptions=True)
 
 
@@ -140,3 +171,4 @@ def run_public(worker):
     import ccxt.pro as ccxt
     clients={name:getattr(ccxt,name)({'enableRateLimit':True,'timeout':8000,'options':{'defaultType':'spot'}}) for name in worker.feeds}
     asyncio.run(WebSocketRunner(worker,clients).run())
+

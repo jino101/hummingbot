@@ -10,6 +10,7 @@ import json
 import os
 import threading
 import time
+from queue import Queue
 from dataclasses import asdict
 from decimal import Decimal
 from pathlib import Path
@@ -18,6 +19,7 @@ from jin_trading.arbitrage import number,scan_with_diagnostics
 from jin_trading.brokers import SpotBroker
 from jin_trading.feeds import PublicFeed
 from jin_trading.server import make_server
+from jin_trading.runtime import start_worker
 from jin_trading.store import Store
 from jin_trading.supervisor import Portfolio
 from jin_trading.execution import ExecutionEngine
@@ -37,7 +39,8 @@ class LiveWorker(Worker):
         if not 0<number(config['max_deploy_fraction'])<=Decimal('.5'):raise ValueError('Invalid deployment limit')
         if not Decimal('.001')<=number(config['slippage'])<Decimal('.05'):raise ValueError('Invalid slippage')
         if not 0<float(config['max_age'])<=3 or not 2<=float(config['poll_seconds'])<=60:raise ValueError('Invalid data timing')
-        self.store,self.config=store,config;self.stop=threading.Event();self.batch_index=0
+        self.store,self.config=store,config;self.stop=threading.Event();self.batch_indices={}
+        self._feed_events,self._feed_futures=Queue(),{}
         self.feeds={name:PublicFeed(name,fee) for name,fee in config['fees'].items()}
         self.portfolio=Portfolio(store.path,'live');self.portfolio.register(clients)
         self.brokers={name:SpotBroker(client,self.feeds[name],armed=True) for name,client in clients.items()}
@@ -85,7 +88,7 @@ class LiveWorker(Worker):
             spec=self.config['bots'][bot['id']];account=spec['exchange'];broker=self.brokers[account]
             usable=[]
             for book in books:
-                if book.exchange!=account:continue
+                if book.exchange!=account or book.pair in self.config.get('deny_pairs', ()):continue
                 verified=broker.verified_fees.get(book.pair)
                 if not verified or not 0<=time.time()-verified[0]<=120:
                     try:
@@ -99,7 +102,8 @@ class LiveWorker(Worker):
             opportunities,near,rejected=scan_with_diagnostics(usable,amount,time.time(),max_age=self.config['max_age'],
                 min_profit=number(self.config['min_profit']),slippage=number(self.config['slippage']))
             eligible=[o for o in opportunities if o.kind=='triangular']
-            if eligible and bot['enabled'] and ready:
+            venue_status=self.universe_status.get('venues',{}).get(account,{})
+            if eligible and bot['enabled'] and ready and not venue_status.get('capacity_exhausted'):
                 o=eligible[0];run=hashlib.sha256((bot['id']+o.sequence).encode()).hexdigest()
                 try:
                     result=self.engine.triangle(bot['id'],account,[p for _,p in o.route],amount,run)
@@ -137,10 +141,11 @@ def main():
         parser.error('Live preflight failed; review the journal and verified account permissions')
     server=make_server(store,os.environ.get('JIN_DASHBOARD_TOKEN',''),args.host,args.port,worker=worker,
                        allowed_origins=config.get('allowed_origins',()))
-    threading.Thread(target=worker.run,daemon=True).start()
+    start_worker(server,worker.run)
     try:server.serve_forever()
     except KeyboardInterrupt:pass
     finally:worker.stop.set();worker.engine.stop_all();server.server_close()
 
 
 if __name__=='__main__':main()
+

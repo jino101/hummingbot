@@ -1,2 +1,4 @@
-# Optional only; the default paper server needs no third-party Python packages.
+# Public WebSocket and optional account adapter dependencies; no credentials included.
+-r requirements.txt
 ccxt==4.5.85
+

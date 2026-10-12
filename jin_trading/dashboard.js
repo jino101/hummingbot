@@ -16,18 +16,29 @@ function render(state) {
   el('capital').textContent=Number(state.capital).toFixed(4)+' USDT';
   el('baseline').textContent=Number(state.baseline).toFixed(4)+' USDT';
   el('risk').textContent=state.halt ? 'Gesperrt: '+state.reason : 'Gemeinsames Tagesverlustlimit: 10 % · Modus '+mode.toUpperCase();
+  let runtimeNote=el('runtime');
+  if(!runtimeNote){runtimeNote=textNode('p','');runtimeNote.id='runtime';runtimeNote.setAttribute('role','status');el('risk').before(runtimeNote);}
+  const runtime=state.runtime;
+  const runtimeReasons={worker_disabled:'Kursdienst deaktiviert',worker_starting:'Kursdienst startet',worker_failed:'Kursdienst ausgefallen',worker_stopped:'Kursdienst beendet',worker_stopping:'Kursdienst wird beendet',processing_failed:'Kursverarbeitung fehlgeschlagen',market_data_missing:'Warte auf gültige Börsenkurse',market_data_stale:'Börsenkurse veraltet',trading_halted:'Handel gesperrt',account_not_ready:'Kontoprüfung noch nicht bereit',status_unavailable:'Status konnte nicht geprüft werden',ready:'Kursdienst bereit'};
+  Object.assign(runtimeReasons,{clock_skew:'Uhrzeitabweichung: Windows-Uhr synchronisieren',route_incomplete:'Warte auf ein vollständiges Dreieck',capacity_exhausted:'Zu viele gleichzeitig benötigte Märkte'});
+  runtimeNote.textContent=runtime ? (runtimeReasons[runtime.reason] || 'Kursdienst nicht bereit')+' · '+runtime.processed_batches+' verarbeitete Datenpakete'+(runtime.last_error?' · Fehler: '+runtime.last_error:'') : 'Kursdienst: Status nicht verfügbar';
   el('bots').replaceChildren();
   for(const bot of state.bots) {
     const card=textNode('article',''); card.className='bot';
     card.append(textNode('h3',bot.id));
     card.append(textNode('p',Number(bot.capital).toFixed(4)+' USDT · PnL '+Number(bot.pnl).toFixed(4)+' USDT'));
-    const stale=(Date.now()/1000-bot.updated)>30;
-    card.append(textNode('p',(bot.enabled?mode.toUpperCase()+' aktiv':'Gestoppt')+' · Daten '+(stale?'veraltet / fehlen':'aktuell')));
+    const botRuntime=runtime?.bots?.[bot.id];
+    const fresh=botRuntime?.ready===true;
+    card.append(textNode('p',(bot.enabled?mode.toUpperCase()+' aktiviert':'Gestoppt')+' · Kursdienst '+(fresh?'bereit':'nicht bereit')));
     const universe=bot.status.universe || {};
-    if(universe.mode==='auto') card.append(textNode('p','Automatische Märkte: '+(universe.scheduled_pairs || 0)+' Paare · Gruppe '+(universe.batch_number || 0)+' / '+(universe.batch_count || 0)+' · REST-Rotation, nicht gleichzeitig'));
+    if(botRuntime) card.append(textNode('p','Vollständige aktuelle Routen: '+botRuntime.complete_routes+' · '+(runtimeReasons[botRuntime.reason] || ({route_incomplete:'Warte auf ein vollständiges Dreieck',capacity_exhausted:'Zu viele gleichzeitig benötigte Märkte'})[botRuntime.reason] || botRuntime.reason)));
+    if(universe.mode==='auto') for(const [venue,status] of Object.entries(universe.venues || {})) {
+      const subscribed=status.active_subscriptions;
+      card.append(textNode('p',venue+' · '+(subscribed?'WebSocket':'REST')+' · '+(subscribed || status.selected_pairs || []).length+' aktive Märkte · Gruppe '+(status.batch_number || 0)+' / '+(status.batch_count || 0)));
+    }
     const row=textNode('div',''); row.className='row';
     for(const [verb,label] of [['start','Start'],['stop','Stop']]) {
-      const button=textNode('button',label); button.disabled=verb==='start' && (state.halt || (state.portfolio && !state.portfolio.ready));
+      const button=textNode('button',label); button.disabled=verb==='start' && (!fresh || state.halt || (state.portfolio && !state.portfolio.ready));
       button.onclick=()=>action('/api/bots/'+encodeURIComponent(bot.id)+'/'+verb); row.append(button);
     }
     card.append(row);
@@ -59,3 +70,4 @@ el('reconcile').onclick=()=>action('/api/reconcile');
 el('halt').onclick=()=>action('/api/halt');
 el('reset').onclick=()=>{if(confirm('Sperre nach Konto- und Orderprüfung zurücksetzen? Der Runtime-Not-Aus des bestehenden Bots bleibt gesetzt.'))action('/api/reset');};
 el('export').onclick=async()=>{try{const r=await fetch('/api/trades.csv',{headers:{Authorization:'Bearer '+token}});if(!r.ok)throw new Error('Export fehlgeschlagen');const url=URL.createObjectURL(await r.blob());const a=document.createElement('a');a.href=url;a.download='jin-paper-trades.csv';a.click();URL.revokeObjectURL(url);}catch(e){el('error').textContent=e.message;}};
+

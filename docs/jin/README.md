@@ -1,5 +1,9 @@
 # JIN Trading — Bot-Zentrale
 
+Aktueller KuCoin-Abnahmekandidat: [Installation, Schnittstellen und offene
+Kontoprüfung](KUCOIN-SETUP.md) · [Paper-Dauerlauf](PAPER-ACCEPTANCE.md).
+Die folgenden Funktionsbeschreibungen ersetzen keine externe Betriebsabnahme.
+
 Stand: 7. Oktober 2026. Der vorhandene Hummingbot-Controller, Observer, die mobile
 Anwendung und Android-Quellen bleiben erhalten. Der zusätzliche Dienst verbindet
 Scanner, dauerhafte Ausführung, Kontorisiko und Dashboard über ein SQLite-Journal.
@@ -187,3 +191,4 @@ und Compose. Tests decken Teilfüllungen, Timeouts, doppelte Events, Stop, Neust
 Tageswechsel, gemeinsame Reservierung, stale Daten, Berechtigungen, Budgetzuordnung,
 Mindestorders und Gebühren ab. Externe Konto-, WebSocket-Soak-, Telefon- und Latenztests
 sind in der Roadmap ausdrücklich offen; institutionelles HFT wird nicht behauptet.
+

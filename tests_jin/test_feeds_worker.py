@@ -116,6 +116,23 @@ class WorkerTests(unittest.TestCase):
         self.assertEqual(len(state['trades']),0)
         self.assertEqual(len(state['bots'][0]['status']['errors']),3)
 
+    def test_denied_valuation_market_is_not_used_for_new_trade(self):
+        self.store.control('kucoin-triangle',True)
+        self.config['deny_pairs']=['A-USDT']
+        self.worker.process_books(triangle(),[])
+        self.assertEqual(self.store.snapshot()['trades'],[])
+        self.assertIn('A-USDT',self.worker.brokers['kucoin-triangle'].books)
+
+    def test_denied_signal_market_does_not_generate_new_orders(self):
+        from unittest.mock import Mock
+        self.config['bots']['kucoin-triangle'].update(strategy='momentum',pair='A-USDT')
+        self.worker.signals['kucoin-triangle']=Mock()
+        self.config['deny_pairs']=['A-USDT']
+        self.store.control('kucoin-triangle',True)
+        self.worker.process_books(triangle(),[])
+        self.worker.signals['kucoin-triangle'].signal.assert_not_called()
+        self.assertEqual(self.worker.portfolio.orders(),[])
+
     def test_held_inventory_is_refreshed_outside_the_rotating_batch(self):
         from test_arbitrage import book
         self.worker.brokers['kucoin-triangle'].books.update({b.pair:b for b in triangle()})
@@ -137,3 +154,4 @@ class WorkerTests(unittest.TestCase):
             config=dict(self.config);config[key]=value
             path=Path(self.tmp.name)/'bad.json';path.write_text(json.dumps(config))
             with self.assertRaises(ValueError):load_config(path)
+

@@ -1,0 +1,2 @@
+# Windows does not provide the IANA time-zone database used by the daily risk latch.
+tzdata==2026.4; sys_platform == 'win32'

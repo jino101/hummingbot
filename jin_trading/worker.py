@@ -3,14 +3,14 @@ import hashlib
 import logging
 import threading
 import time
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import asdict
 from decimal import Decimal
 from queue import Queue, Empty
 
 from jin_trading.arbitrage import number, scan_with_diagnostics
 from jin_trading.feeds import PublicFeed
-from jin_trading.universe import plan_batches
+from jin_trading.universe import plan_venue_batches
 from jin_trading.supervisor import Portfolio
 from jin_trading.execution import ExecutionEngine, PaperBroker
 from jin_trading.strategies import Signals, STRATEGIES
@@ -67,7 +67,8 @@ class Worker:
         self.store, self.config = store, config
         self.feeds = {ex: PublicFeed(ex, fee) for ex, fee in config['fees'].items()}
         self.stop = threading.Event()
-        self.batch_index = 0
+        self.batch_indices = {}
+        self._feed_events, self._feed_futures = Queue(), {}
         self.universe_status = {'mode': config.get('pair_mode', 'manual')}
         self.portfolio=Portfolio(store.path)
         self.portfolio.register(config['bots'])
@@ -79,73 +80,103 @@ class Worker:
         self.signals={bot:Signals(spec['strategy'],**spec.get('signal',{})) for bot,spec in config['bots'].items()
                       if spec.get('strategy') in STRATEGIES[2:]}
 
-    def required_pairs(self, exchange):
+    def required_pairs(self, exchange, signal_bot=None):
         """Keep position valuations and configured signal markets in every cycle."""
         pairs=set()
         for bot,spec in self.config['bots'].items():
             if spec['exchange']!=exchange:continue
-            if spec.get('pair'):pairs.add(spec['pair'])
+            if spec.get('pair') and (signal_bot is None or signal_bot == bot):pairs.add(spec['pair'])
             broker=self.brokers.get(bot)
             if isinstance(broker,PaperBroker):
                 pairs.update(asset+'-USDT' for asset,amount in broker.balances().items()
                              if asset!='USDT' and amount>0)
         return tuple(sorted(pairs))
 
+    def select_venue_batch(self, exchange, pairs):
+        priorities = self.required_pairs(exchange)
+        plan = plan_venue_batches({exchange: pairs}, self.config.get('batch_size', 12),
+                                 self.config.get('deny_pairs', ()), {exchange: priorities})[exchange]
+        batches = plan.pop('batches')
+        index = self.batch_indices.get(exchange, 0) % len(batches) if batches else 0
+        if batches:
+            self.batch_indices[exchange] = self.batch_indices.get(exchange, 0) + 1
+        plan.update(batch_number=index + 1 if batches else 0,
+                    selected_pairs=batches[index] if batches else (), books_received=0,
+                    state='collecting' if batches else 'empty', error=None)
+        return plan
+
+    def publish_venue_status(self, exchange, status):
+        """Publish actual selections; aggregates never describe a fictitious shared batch."""
+        venues = dict(self.universe_status.get('venues', {}))
+        venues[exchange] = dict(status)
+        self.universe_status.update(venues=venues,
+            catalogue_pairs={name: row['catalogue_pairs'] for name, row in venues.items()},
+            scheduled_pairs=sum(row['scheduled_pairs'] for row in venues.values()),
+            batch_count={name: row['batch_count'] for name, row in venues.items()},
+            batch_number={name: row['batch_number'] for name, row in venues.items()},
+            selected_pairs={name: row['selected_pairs'] for name, row in venues.items()},
+            valuation_priority_pairs={name: row['valuation_priority_pairs'] for name, row in venues.items()})
+
     def tick(self):
         books, errors = [], []
-        venue_pairs = {}
-        if self.config.get('pair_mode', 'manual') == 'auto':
-            def discover(feed):
-                try:
-                    return feed.exchange, feed.pairs(), None
-                except Exception as exc:
-                    return feed.exchange, (), f'{feed.exchange} discovery: {type(exc).__name__}: {exc}'
-            with ThreadPoolExecutor(max_workers=len(self.feeds)) as pool:
-                for exchange, pairs, failure in pool.map(discover, self.feeds.values()):
-                    venue_pairs[exchange] = pairs
-                    if failure:
-                        errors.append(failure)
-            batches = plan_batches(venue_pairs, self.config.get('batch_size', 12), self.config.get('deny_pairs', []))
-            index = self.batch_index % len(batches) if batches else 0
-            selected = batches[index] if batches else ()
-            self.batch_index += 1
-            self.universe_status = {'mode': 'auto', 'catalogue_pairs': {ex: len(p) for ex, p in venue_pairs.items()},
-                                    'scheduled_pairs': len({p for batch in batches for p in batch}),
-                                    'batch_count': len(batches), 'batch_number': index + 1 if batches else 0,
-                                    'selected_pairs': selected, 'coverage': 'Rotating REST batches; not simultaneous'}
-        else:
-            selected = self.config['pairs']
-        # One task per exchange: refresh rules once; pairs sequentially avoid a rule-cache race.
-        queue=Queue()
+        automatic = self.config.get('pair_mode', 'manual') == 'auto'
+        self.universe_status.update(mode='auto' if automatic else 'manual',
+            coverage='Independent bounded REST batches per exchange; not simultaneous')
+
         def collect(feed):
-            priorities=self.required_pairs(feed.exchange)
-            for pair in dict.fromkeys((*priorities,*selected)):
-                if venue_pairs and pair not in venue_pairs.get(feed.exchange, ()):
-                    continue
-                try:
-                    queue.put(('book',feed.book(pair)))
-                except Exception as exc:
-                    queue.put(('error',f'{feed.exchange} {pair}: {type(exc).__name__}: {exc}'))
-                    # Do not hammer every remaining market during outages/rate limiting.
+            exchange = feed.exchange
+            try:
+                pairs = feed.pairs() if automatic else tuple(dict.fromkeys(
+                    (*self.required_pairs(exchange), *self.config['pairs'])))
+                status = self.select_venue_batch(exchange, pairs)
+            except Exception as exc:
+                status = self.select_venue_batch(exchange, ())
+                status.update(state='discovery_failed', error=type(exc).__name__)
+                self._feed_events.put(('error', f'{exchange} discovery: {type(exc).__name__}'))
+                self._feed_events.put(('status', (exchange, status)))
+                return
+            self._feed_events.put(('status', (exchange, dict(status))))
+            for pair in status['selected_pairs']:
+                if self.stop.is_set():
                     break
-            queue.put(('done',feed.exchange))
-        with ThreadPoolExecutor(max_workers=len(self.feeds)) as pool:
-            self.universe_status['valuation_priority_pairs']={name:self.required_pairs(name) for name in self.feeds}
-            futures=[pool.submit(collect, f) for f in self.feeds.values()]
-            done=0
-            while done<len(futures):
-                try:kind,value=queue.get(timeout=1)
-                except Empty:
-                    if all(f.done() for f in futures):
-                        for f in futures:f.result()
-                        break
-                    continue
-                if kind=='done':done+=1
-                elif kind=='error':errors.append(value)
-                else:
-                    books.append(value)
-                    # A slow venue cannot delay an already complete fresh route.
-                    self.process_books(books,errors)
+                try:
+                    quote = feed.book(pair)
+                    status['books_received'] += 1
+                    self._feed_events.put(('book', quote))
+                except Exception as exc:
+                    status.update(state='feed_failed', error=type(exc).__name__)
+                    self._feed_events.put(('error', f'{exchange} {pair}: {type(exc).__name__}'))
+                    break  # Preserve provider cooldown; do not hammer subsequent pairs.
+            if status['state'] == 'collecting':
+                status['state'] = 'observed'
+            self._feed_events.put(('status', (exchange, status)))
+
+        # One in-flight task per venue, including discovery. A slow foreign venue
+        # cannot prevent a healthy venue from being processed or refreshed again.
+        available = [feed for name, feed in self.feeds.items()
+                     if name not in self._feed_futures or self._feed_futures[name].done()]
+        if available:
+            pool = ThreadPoolExecutor(max_workers=len(available))
+            for feed in available:
+                self._feed_futures[feed.exchange] = pool.submit(collect, feed)
+            pool.shutdown(wait=False)
+        deadline = time.monotonic() + float(self.config['max_age'])
+        while not self.stop.is_set():
+            try:
+                kind, value = self._feed_events.get(timeout=max(0, min(.1, deadline - time.monotonic())))
+            except Empty:
+                if all(f.done() for f in self._feed_futures.values()) or time.monotonic() >= deadline:
+                    break
+                continue
+            if kind == 'status':
+                self.publish_venue_status(*value)
+            elif kind == 'error':
+                errors.append(value)
+            else:
+                books.append(value)
+                self.process_books(books, errors)
+            if time.monotonic() >= deadline:
+                break
         self.process_books(books, errors)
 
     def process_books(self, books, errors):
@@ -161,20 +192,26 @@ class Worker:
                 errors=list(errors)+[bot+': '+str(exc)]
         snapshot = self.store.snapshot()
         if snapshot['halt']:self.engine.stop_all()
+        denied = set(self.config.get('deny_pairs', ()))
+        trading_books = [book for book in books if book.pair not in denied]
         for bot in snapshot['bots']:
             capital = number(bot['capital'])
             amount = min(capital * number(self.config['max_deploy_fraction']),
                          capital * Decimal('0.01') / number(self.config['stress_fraction']))
             opportunities, near_misses, rejected = scan_with_diagnostics(
-                books, amount, time.time(), max_age=self.config['max_age'],
+                trading_books, amount, time.time(), max_age=self.config['max_age'],
                 min_profit=number(self.config['min_profit']),
                 slippage=number(self.config['slippage']), near_limit=10)
             spec = self.config['bots'][bot['id']]
+            venue_status = self.universe_status.get('venues', {}).get(spec['exchange'], {})
+            missing_for_bot = set(venue_status.get('missing_required_pairs', ())) & set(
+                self.required_pairs(spec['exchange'], signal_bot=bot['id']))
+            capacity_ready = not (venue_status.get('capacity_exhausted') or missing_for_bot or spec.get('pair') in denied)
             eligible = [o for o in opportunities if o.kind == 'triangular' and o.route[0][0] == spec['exchange']]
             bot_near = [(o, reason) for o, reason in near_misses
                         if o.kind == 'triangular' and o.route[0][0] == spec['exchange']][:5]
             # Repeat only after observing a new complete book sequence; transaction checks deduplicate.
-            if bot['id'] in self.signals and bot['enabled'] and not snapshot['halt']:
+            if bot['id'] in self.signals and bot['enabled'] and not snapshot['halt'] and capacity_ready:
                 broker=self.brokers[bot['id']]
                 pair=spec['pair'];book=broker.books.get(pair)
                 if book and 0<=time.time()-book.timestamp<=self.config['max_age']:
@@ -183,7 +220,7 @@ class Worker:
                         if signal:self.engine.directional(bot['id'],bot['id'],pair,*signal)
                         self.store.mark_equity(bot['id'],broker.sync())
                     except ValueError as exc:errors=list(errors)+[bot['id']+': '+str(exc)]
-            elif eligible and bot['enabled'] and not snapshot['halt']:
+            elif eligible and bot['enabled'] and not snapshot['halt'] and capacity_ready:
                 opportunity=eligible[0]
                 run_id=hashlib.sha256((bot['id']+opportunity.sequence).encode()).hexdigest()
                 try:
@@ -213,3 +250,4 @@ class Worker:
             except Exception:
                 logging.exception('Worker tick failed; no paper fill on failed cycle')
             self.stop.wait(float(self.config['poll_seconds']))
+

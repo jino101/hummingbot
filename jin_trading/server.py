@@ -5,7 +5,6 @@ import hmac
 import io
 import json
 import os
-import threading
 from urllib.parse import unquote, urlsplit
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -13,6 +12,7 @@ from pathlib import Path
 from jin_trading.store import Store
 from jin_trading.worker import Worker, load_config
 from jin_trading.strategies import growth
+from jin_trading.runtime import WorkerRuntime, start_worker
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -72,12 +72,16 @@ class Handler(BaseHTTPRequestHandler):
             if portfolio['reason']:state['reason']=portfolio['reason']
             state['universe']=self.server.worker.universe_status
         state['growth']=growth(state['capital'])
+        state['runtime']=self.server.runtime.snapshot()
         return state
 
     def do_GET(self):
         if self.path=='/healthz':
             mode=self.server.worker.portfolio.mode if self.server.worker else 'paper'
             self.send(200,{'service':'jin','mode':mode});return
+        if self.path=='/readyz':
+            ready=self.server.runtime.snapshot()['ready']
+            self.send(200 if ready else 503,{'service':'jin','ready':ready});return
         assets = {'/': ('dashboard.html', 'text/html; charset=utf-8'),
                   '/dashboard.js': ('dashboard.js', 'application/javascript'),
                   '/dashboard.css': ('dashboard.css', 'text/css')}
@@ -89,6 +93,8 @@ class Handler(BaseHTTPRequestHandler):
             return
         if self.path == '/api/state':
             self.send(200, self.state())
+        elif self.path == '/api/runtime':
+            self.send(200, self.server.runtime.snapshot())
         elif self.path=='/api/orders':
             self.send(200,self.server.worker.portfolio.orders() if self.server.worker else [])
         elif self.path == '/api/existing/status':
@@ -150,6 +156,8 @@ class Handler(BaseHTTPRequestHandler):
                     self.send(404, {'error': 'Unbekannte Aktion'})
                     return
                 bot=unquote(parts[3], errors='strict')
+                if parts[4]=='start' and not self.server.runtime.snapshot().get('bots',{}).get(bot,{}).get('ready',False):
+                    raise ValueError('Worker not ready; check runtime status and fresh market data')
                 if self.server.worker:
                     if parts[4]=='start' and not self.server.worker.portfolio.snapshot()['ready']:
                         raise ValueError('Portfolio not ready; refresh snapshots and reconcile')
@@ -173,6 +181,7 @@ def make_server(store, token, host='127.0.0.1', port=8788, observation_path=None
             server.server_close();raise ValueError('CORS requires exact HTTP origins without a path')
     server.allowed_origins=origins | {f'http://{host}:{server.server_port}',f'http://127.0.0.1:{server.server_port}'}
     server.worker=worker
+    server.runtime=WorkerRuntime(worker)
     server.observation_path = Path(observation_path) if observation_path else None
     server.kill_switch_path = Path(kill_switch_path) if kill_switch_path else None
     server.daemon_threads = True
@@ -212,7 +221,7 @@ def main():
             except ImportError:parser.error('WebSocket feed needs the optional CCXT dependency')
             from jin_trading.websocket import run_public
             target=lambda:run_public(worker)
-        threading.Thread(target=target, daemon=True).start()
+        start_worker(server,target)
     print(f'JIN paper dashboard: http://{args.host}:{args.port} — bots start stopped')
     try:
         server.serve_forever()
@@ -225,3 +234,4 @@ def main():
 
 if __name__ == '__main__':
     main()
+
