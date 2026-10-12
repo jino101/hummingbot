@@ -12,6 +12,32 @@ from decimal import Decimal
 from jin_trading.arbitrage import Book,number
 
 
+async def thread_call(function, *args):
+    """Cancellation must not abandon a thread still holding worker resources.
+
+    Cancelling to_thread's awaiter cannot stop its underlying synchronous work.
+    Drain that work before propagating cancellation, including repeated cancels
+    from nested runner cleanup, so run() cannot return with SQLite still open.
+    """
+    operation = asyncio.create_task(asyncio.to_thread(function, *args))
+    cancelled = False
+    while not operation.done():
+        try:
+            await asyncio.shield(operation)
+        except asyncio.CancelledError:
+            cancelled = True
+        except Exception:
+            if not cancelled:
+                raise
+    if cancelled:
+        # Retrieve an exception raised during shutdown without replacing the
+        # caller's cancellation or leaking an unhandled-task warning.
+        if not operation.cancelled():
+            operation.exception()
+        raise asyncio.CancelledError
+    return operation.result()
+
+
 def snapshot(exchange,pair,raw,rule,fee,received_at=None):
     received_at=time.time() if received_at is None else received_at
     stamp=raw.get('timestamp')
@@ -54,7 +80,7 @@ class WebSocketRunner:
                     previous=quote.sequence;self.sequences[key]=previous;delay=1
                     if quote.assets[1]!='USDT' and exchange=='bitget':
                         # Bitget's converted minimum needs the fresh conversion used by PublicFeed.book.
-                        checked=await asyncio.to_thread(feed.book,pair)
+                        checked=await thread_call(feed.book,pair)
                         quote=Book(exchange,pair,quote.bids,quote.asks,min(quote.timestamp,checked.timestamp),quote.sequence,
                                    quote.fee,quote.step,quote.min_size,checked.min_notional,quote.max_size)
                     await self.publish_book(quote)
@@ -101,13 +127,13 @@ class WebSocketRunner:
                 status['books_received'] = status.get('books_received', 0) + received.get(name,0)
                 self.publish_venue(name, status)
             errors=notices+[a+': '+e for a,e in self.errors.items()]
-            await asyncio.to_thread(self.worker.process_books,fresh,errors)
+            await thread_call(self.worker.process_books,fresh,errors)
 
     async def discover(self, names=None):
         async def venue(name):
             feed = self.worker.feeds[name]
             try:
-                pairs=await asyncio.to_thread(feed.pairs)
+                pairs=await thread_call(feed.pairs)
                 await asyncio.wait_for(self.clients[name].load_markets(reload=True), timeout=20)
                 self.errors.pop(name+':discovery',None)
                 return name, pairs

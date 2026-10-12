@@ -1,5 +1,6 @@
 import asyncio
 import tempfile
+import threading
 import time
 import unittest
 from pathlib import Path
@@ -7,7 +8,7 @@ from unittest.mock import AsyncMock,MagicMock,patch
 
 from jin_trading.store import Store
 from jin_trading.worker import Worker,load_config
-from jin_trading.websocket import WebSocketRunner,snapshot
+from jin_trading.websocket import WebSocketRunner,snapshot,thread_call
 from test_arbitrage import triangle
 
 
@@ -63,6 +64,84 @@ class WebSocketTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(self.worker.store.snapshot()['trades']),1)
         self.client.close.assert_awaited_once()
         self.assertIn('median_event_age_ms',self.worker.universe_status['websocket'])
+
+    async def test_shutdown_waits_for_started_processing_thread_to_release_database(self):
+        entered=asyncio.Event();release=threading.Event();finished=threading.Event()
+        loop=asyncio.get_running_loop()
+        def processing(books,errors):
+            try:
+                with self.worker.store.connect() as db:
+                    db.execute('SELECT COUNT(*) FROM bots').fetchone()
+                    loop.call_soon_threadsafe(entered.set)
+                    if not release.wait(3):raise RuntimeError('Test did not release processing')
+            finally:finished.set()
+        async def venue(name,consumer):
+            await entered.wait()
+            self.worker.stop.set()
+        self.worker.process_books=processing
+        self.runner.run_venue=venue
+        await self.runner.queue.put(('status','test processing'))
+        task=asyncio.create_task(self.runner.run())
+        try:
+            await asyncio.wait_for(entered.wait(),1)
+            with self.assertRaises(asyncio.TimeoutError):
+                await asyncio.wait_for(asyncio.shield(task),.1)
+            self.assertFalse(finished.is_set())
+            self.client.close.assert_not_awaited()
+        finally:
+            release.set()
+            await asyncio.wait_for(task,2)
+            self.assertTrue(await asyncio.to_thread(finished.wait,1))
+        self.client.close.assert_awaited_once()
+
+    async def test_cancelled_runner_drains_started_discovery_before_closing_clients(self):
+        entered=asyncio.Event();release=threading.Event();finished=threading.Event()
+        loop=asyncio.get_running_loop()
+        def pairs():
+            try:
+                loop.call_soon_threadsafe(entered.set)
+                if not release.wait(3):raise RuntimeError('Test did not release discovery')
+                return tuple(self.feed.rules)
+            finally:finished.set()
+        self.feed.pairs=pairs
+        task=asyncio.create_task(self.runner.run())
+        try:
+            await asyncio.wait_for(entered.wait(),1)
+            task.cancel()
+            with self.assertRaises(asyncio.TimeoutError):
+                await asyncio.wait_for(asyncio.shield(task),.1)
+            task.cancel()  # Nested shutdown can cancel an awaiter more than once.
+            with self.assertRaises(asyncio.TimeoutError):
+                await asyncio.wait_for(asyncio.shield(task),.1)
+            self.assertFalse(finished.is_set())
+            self.client.close.assert_not_awaited()
+        finally:
+            release.set()
+            with self.assertRaises(asyncio.CancelledError):
+                await asyncio.wait_for(task,2)
+            self.assertTrue(await asyncio.to_thread(finished.wait,1))
+        self.client.close.assert_awaited_once()
+
+    async def test_thread_errors_propagate_normally_and_cancellation_is_preserved(self):
+        def fail():raise ValueError('worker failure')
+        with self.assertRaisesRegex(ValueError,'worker failure'):
+            await thread_call(fail)
+        entered=asyncio.Event();release=threading.Event()
+        loop=asyncio.get_running_loop()
+        def delayed_failure():
+            loop.call_soon_threadsafe(entered.set)
+            if not release.wait(3):raise RuntimeError('Test did not release worker')
+            raise ValueError('failure after cancellation')
+        task=asyncio.create_task(thread_call(delayed_failure))
+        try:
+            await asyncio.wait_for(entered.wait(),1)
+            task.cancel()
+            with self.assertRaises(asyncio.TimeoutError):
+                await asyncio.wait_for(asyncio.shield(task),.1)
+        finally:
+            release.set()
+            with self.assertRaises(asyncio.CancelledError):
+                await asyncio.wait_for(task,2)
 
     async def test_hot_market_is_coalesced_without_dropping_other_triangle_legs(self):
         from dataclasses import replace
