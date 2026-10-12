@@ -1,5 +1,6 @@
 name: JIN paper trading checks
 on:
+  workflow_dispatch:
   push:
     paths: ['jin_trading/**', 'tests_jin/**', 'scripts/jin_arbitrage_monitor.py', 'hummingbot/strategy_v2/executors/arbitrage_executor/**', 'controllers/generic/arbitrage_controller.py', 'controllers/generic/jino_cross_exchange_arbitrage.py', 'hummingbot/jino_arbitrage/**', 'jino_mobile/**', 'Dockerfile.jin', 'docker-compose.jin.yml', '.github/workflows/jin-checks.yml']
   pull_request:
