@@ -99,8 +99,10 @@ Die tatsächliche Dauer hängt von gefundenen Fehlern, API-/Host-Zugang und Lauf
 - [x] Eigenen Arbeitszweig von PR #2 erstellt.
 - [x] GitHub-Repository und offene PRs erneut geprüft.
 - [x] Ausgangsbudget- und Integrationslücken identifiziert.
-- [ ] Vollständigen P0-Auditbericht abschließen.
+- [x] P0-Auditbericht erstellt; Cross-Exchange-Integration, EUR-Budget und Fee-Modell als Blocker dokumentiert.
 - [ ] 10-EUR-Kapitalmodell implementieren.
-- [ ] Tests und CI für jede Änderung ausführen.
+- [x] Erste Cross-Exchange-Härtung: vollständige IOC-Orderbuchtiefe und Nettogewinn nach Quote-Gebühren werden vor der ersten Paper-Order geprüft.
+- [x] Regressionstests für nicht profitable Routen und unzureichende Tiefe ergänzt.
+- [ ] Neue Regressionstests und vollständige Suite ausführen; für den Arbeitszweig liegen noch keine GitHub-Actions-Läufe vor.
 - [ ] Paper-Abnahmen durchführen.
 - [ ] Live-Freigabe separat entscheiden.
