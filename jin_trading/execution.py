@@ -89,41 +89,100 @@ class ExecutionEngine:
                 self.portfolio.finish(run,False,type(exc).__name__+': '+str(exc))
             raise
 
-    def cross(self, bot, buy_account, sell_account, pair, quantity, run_id=None):
-        """Prefunded cross-exchange arbitrage. No automatic transfers.
+    @staticmethod
+    def _depth_notional(book, side, quantity, limit_price):
+        """Return the quote notional for a full IOC fill inside its price limit."""
+        remaining = number(quantity)
+        notional = Decimal('0')
+        levels = book.asks if side == 'buy' else book.bids
+        for level_price, available in levels:
+            if side == 'buy' and level_price > limit_price:
+                break
+            if side == 'sell' and level_price < limit_price:
+                break
+            used = min(remaining, available)
+            notional += used * level_price
+            remaining -= used
+            if remaining == 0:
+                break
+        if remaining > 0:
+            raise ValueError('Insufficient executable depth')
+        return notional
 
-        Buy quote and sell base are reserved together. The two IOC orders are
-        journalled separately; a partial/uncertain first leg stops the second.
+    def cross(self, bot, buy_account, sell_account, pair, quantity, run_id=None):
+        """Prefunded paper cross-exchange arbitrage; no automatic transfers.
+
+        Both books are fully depth-checked and the quote-denominated fees and
+        minimum net return are checked before the first simulated order.
         """
-        quantity=number(quantity)
-        if self.portfolio.mode=='live':
+        quantity = number(quantity)
+        if self.portfolio.mode == 'live':
             raise ValueError('Live cross-exchange requires verified asset identity and inventory-rebalance acceptance')
-        if buy_account==sell_account or quantity<=0:raise ValueError('Two accounts and positive quantity required')
-        buy=self.brokers[buy_account].book(pair);sell=self.brokers[sell_account].book(pair)
-        if buy.assets!=sell.assets or buy.assets[1]!='USDT':raise ValueError('USDT market required')
-        for book in (buy,sell):
-            if not 0<=time.time()-book.timestamp<=self.max_age:raise ValueError('Stale order book')
-            if quantity/book.step!=(quantity/book.step).to_integral_value():raise ValueError('Invalid quantity precision')
-        buy_price=buy.asks[0][0]*(1+self.slippage);sell_price=sell.bids[0][0]*(1-self.slippage)
-        cost=quantity*buy_price*(1+buy.fee);value=quantity*sell.bids[0][0]
-        if cost<buy.min_notional or quantity*sell_price<sell.min_notional:raise ValueError('Exchange minimum not met')
-        run=self.portfolio.reserve(bot,[(buy_account,'USDT',cost,cost),(sell_account,sell.assets[0],quantity,value)],run_id)
+        if buy_account == sell_account or quantity <= 0:
+            raise ValueError('Two accounts and positive quantity required')
+        buy = self.brokers[buy_account].book(pair)
+        sell = self.brokers[sell_account].book(pair)
+        if buy.assets != sell.assets or buy.assets[1] != 'USDT':
+            raise ValueError('USDT market required')
+        for book in (buy, sell):
+            if not 0 <= time.time() - book.timestamp <= self.max_age:
+                raise ValueError('Stale order book')
+            if quantity < book.min_size or quantity > book.max_size:
+                raise ValueError('Exchange quantity limits not met')
+            if quantity / book.step != (quantity / book.step).to_integral_value():
+                raise ValueError('Invalid quantity precision')
+
+        buy_limit = buy.asks[0][0] * (1 + self.slippage)
+        sell_limit = sell.bids[0][0] * (1 - self.slippage)
+        buy_notional = self._depth_notional(buy, 'buy', quantity, buy_limit)
+        sell_notional = self._depth_notional(sell, 'sell', quantity, sell_limit)
+        if buy_notional < buy.min_notional or sell_notional < sell.min_notional:
+            raise ValueError('Exchange minimum notional not met')
+
+        # PaperBroker and this cross path model spot fees in the quote asset.
+        buy_fee = buy_notional * buy.fee
+        sell_fee = sell_notional * sell.fee
+        total_cost = buy_notional + buy_fee
+        net_proceeds = sell_notional - sell_fee
+        net_profit = net_proceeds - total_cost
+        net_fraction = net_profit / total_cost
+        if net_profit <= 0 or net_fraction < self.min_profit:
+            raise ValueError('Cross-exchange route below net profit threshold')
+
+        run = self.portfolio.reserve(
+            bot,
+            [(buy_account, 'USDT', total_cost, total_cost),
+             (sell_account, sell.assets[0], quantity, net_proceeds)],
+            run_id)
         try:
-            orders=[]
-            for account,side,price in ((buy_account,'buy',buy_price),(sell_account,'sell',sell_price)):
-                book=self.brokers[account].book(pair)
-                if not 0<=time.time()-book.timestamp<=self.max_age:raise ValueError('Stale cross-exchange leg')
-                _,order=self.submit(run,account,pair,side,quantity,price)
+            orders = []
+            for account, side, price in (
+                (buy_account, 'buy', buy_limit),
+                (sell_account, 'sell', sell_limit)
+            ):
+                book = self.brokers[account].book(pair)
+                if not 0 <= time.time() - book.timestamp <= self.max_age:
+                    raise ValueError('Stale cross-exchange leg')
+                _, order = self.submit(run, account, pair, side, quantity, price)
                 orders.append(order)
-                if order['status'] not in TERMINAL or number(order.get('filled',0))!=quantity:
+                if order['status'] not in TERMINAL or number(order.get('filled', 0)) != quantity:
                     raise ValueError('Partial or pending cross-exchange leg')
-                fees=order.get('fees') or ([order['fee']] if order.get('fee') else [])
-                if any(f['currency']==buy.assets[0] and number(f['cost'])>0 for f in fees):
+                fees = order.get('fees') or ([order['fee']] if order.get('fee') else [])
+                if any(f['currency'] == buy.assets[0] and number(f['cost']) > 0 for f in fees):
                     raise ValueError('Base-denominated fee requires explicit inventory reconciliation')
-            self.portfolio.finish(run,True)
-            return {'run':run,'orders':orders,'inventory_rebalance_required':True}
+            self.portfolio.finish(run, True)
+            return {
+                'run': run,
+                'orders': orders,
+                'estimated_buy_cost': str(total_cost),
+                'estimated_sell_proceeds': str(net_proceeds),
+                'estimated_net_profit': str(net_profit),
+                'estimated_net_fraction': str(net_fraction),
+                'inventory_rebalance_required': True,
+            }
         except Exception as exc:
-            if not self.portfolio.abort_unsubmitted(run):self.portfolio.finish(run,False,str(exc))
+            if not self.portfolio.abort_unsubmitted(run):
+                self.portfolio.finish(run, False, str(exc))
             raise
 
     def stop_bot(self, bot):
