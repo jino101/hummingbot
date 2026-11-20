@@ -155,6 +155,26 @@ class ExecutionTests(unittest.TestCase):
         self.assertEqual(self.engine.stop_bot('none'),[])
         with self.assertRaises(ValueError):self.engine.directional('bot','a','A-USDT','buy',0)
 
+    def test_cross_rejects_non_profitable_route_before_any_order(self):
+        self.b.books = dict(self.books)
+        self.b.books['A-USDT'] = book('A-USDT', '.99', '1', exchange='binance')
+        with patch.object(self.a, 'submit', wraps=self.a.submit) as submit:
+            with self.assertRaisesRegex(ValueError, 'below net profit threshold'):
+                self.engine.cross('cross', 'a', 'b', 'A-USDT', D('.5'))
+            submit.assert_not_called()
+        self.assertEqual(self.portfolio.orders(), [])
+
+    def test_cross_rejects_insufficient_depth_before_any_order(self):
+        self.a.books = dict(self.books)
+        self.a.books['A-USDT'] = book('A-USDT', '.99', '1', depth='.1')
+        self.b.books = dict(self.books)
+        self.b.books['A-USDT'] = book('A-USDT', '1.1', '1.11', exchange='binance')
+        with patch.object(self.a, 'submit', wraps=self.a.submit) as submit:
+            with self.assertRaisesRegex(ValueError, 'Insufficient executable depth'):
+                self.engine.cross('cross', 'a', 'b', 'A-USDT', D('.5'))
+            submit.assert_not_called()
+        self.assertEqual(self.portfolio.orders(), [])
+
     def test_prefunded_cross_and_missing_base(self):
         # Reserve both legs; sell-side base has to exist before starting.
         with self.assertRaises(ValueError):self.engine.cross('cross','a','b','A-USDT',D('.5'))
